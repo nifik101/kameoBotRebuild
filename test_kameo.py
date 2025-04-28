@@ -1,14 +1,13 @@
 import pytest
 from unittest.mock import Mock, patch
 import responses
-import os
 import requests
 # No longer need importlib or module reload
 # import importlib 
 # import config as config_module
 from config import KameoConfig # Import the class directly
 from auth import KameoAuthenticator
-from get_it_done import KameoClient
+from kameo_client import KameoClient
 
 
 @pytest.fixture
@@ -84,7 +83,15 @@ def test_login_flow(client, config):
         responses.GET,
         f"{config.base_url}/auth/2fa",
         status=200,
-        body=""
+        body='''
+            <html><body>
+                <form action="/auth/2fa" method="post">
+                    <input type="hidden" name="ezxform_token" value="mock_token_value" />
+                    <input type="text" name="AuthCode" />
+                    <button type="submit" name="ValidateButton"></button>
+                </form>
+            </body></html>
+        '''
     )
     
     # Mock 2FA submission

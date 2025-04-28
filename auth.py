@@ -1,216 +1,149 @@
 import pyotp
-import time
 import logging
-import hmac
-import hashlib
 import base64
-import struct
-from typing import Optional, List, Dict, Any
+from typing import Optional
+from datetime import datetime, timezone # Importera datetime och timezone
 
 class KameoAuthenticator:
-    """Handles authentication including 2FA for Kameo"""
+    """Hanterar autentisering inklusive 2FA (TOTP) för Kameo."""
     
     def __init__(self, totp_secret: Optional[str] = None):
-        self.totp_secret = totp_secret
-        self._totp = None
+        """
+        Initialiserar autentiseraren med TOTP-hemligheten.
+
+        Args:
+            totp_secret: Base32-kodad TOTP-hemlighet.
+        """
+        self.totp_secret: Optional[str] = totp_secret
+        self._totp: Optional[pyotp.TOTP] = None
         
         if totp_secret:
-            # Try to normalize the secret if needed
+            # Försök normalisera hemligheten för att säkerställa korrekt format
             normalized_secret = self._normalize_secret(totp_secret)
             
             if normalized_secret:
-                # Standard TOTP with 30 second interval
+                # Skapa standard TOTP-objekt (SHA1, 6 siffror, 30s intervall)
                 self._totp = pyotp.TOTP(normalized_secret)
-                logging.info(f"TOTP authenticator initialized with secret: {normalized_secret[:3]}...{normalized_secret[-3:]}")
+                # Logga endast delar av hemligheten av säkerhetsskäl
+                logging.info(f"TOTP-autentiserare initierad med hemlighet: {normalized_secret[:3]}...{normalized_secret[-3:]}")
                 
-                # Log verification URL for testing with Google Authenticator
-                provisioning_uri = self._totp.provisioning_uri("kameo@example.com", issuer_name="Kameo")
-                logging.info(f"TOTP provisioning URI: {provisioning_uri}")
+                # Logga verifierings-URL för enkel testning med authenticator-appar
+                # Använd ett generiskt användarnamn, e-posten är inte kritisk här
+                try:
+                    provisioning_uri = self._totp.provisioning_uri("user@kameo-script", issuer_name="Kameo Script")
+                    logging.info(f"TOTP Provisioning URI (för test): {provisioning_uri}")
+                except Exception as e:
+                    logging.warning(f"Kunde inte generera provisioning URI: {e}")
             else:
-                logging.error("Failed to normalize TOTP secret")
-    
+                logging.error("Misslyckades med att normalisera TOTP-hemligheten. Kontrollera att den är korrekt Base32-kodad.")
+        else:
+            logging.warning("Ingen TOTP-hemlighet angiven. 2FA kommer inte att fungera.")
+
     def _normalize_secret(self, secret: str) -> Optional[str]:
-        """Normalize the secret to ensure it's in the correct format"""
+        """
+        Normaliserar hemligheten för att säkerställa Base32-format och ta bort ogiltiga tecken.
+
+        Args:
+            secret: Den råa hemlighetssträngen.
+
+        Returns:
+            Den normaliserade Base32-strängen, eller None om normalisering misslyckas.
+        """
         try:
-            # Remove spaces and convert to uppercase
+            # Ta bort mellanslag och konvertera till versaler
             cleaned = secret.replace(" ", "").upper()
             
-            # Check if it's a valid base32 string
-            try:
-                base64.b32decode(cleaned, casefold=True)
-                return cleaned
-            except Exception:
-                logging.warning("Secret does not appear to be valid base32, trying to convert...")
+            # Kontrollera om strängen endast innehåller giltiga Base32-tecken
+            valid_base32_chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+            if not all(c in valid_base32_chars for c in cleaned):
+                logging.warning("Hemligheten innehåller ogiltiga tecken för Base32. Försöker filtrera.")
+                cleaned = "".join(filter(lambda c: c in valid_base32_chars, cleaned))
+                if not cleaned:
+                    logging.error("Hemligheten är tom efter filtrering av ogiltiga tecken.")
+                    return None
+
+            # Säkerställ korrekt padding för Base32-avkodning
+            padding_needed = (8 - len(cleaned) % 8) % 8
+            padded_secret = cleaned + '=' * padding_needed
+
+            # Försök avkoda för att validera formatet
+            base64.b32decode(padded_secret, casefold=True)
             
-            # Try to convert from other formats if needed
-            # For example, if it's hex encoded
-            if all(c in "0123456789ABCDEFabcdef" for c in cleaned):
-                try:
-                    # Convert hex to bytes, then encode as base32
-                    hex_bytes = bytes.fromhex(cleaned)
-                    base32_str = base64.b32encode(hex_bytes).decode('utf-8')
-                    return base32_str
-                except Exception:
-                    logging.warning("Failed to convert from hex to base32")
+            # Returnera den rensade hemligheten (utan padding, då pyotp hanterar det)
+            logging.info("TOTP-hemlighet normaliserad.")
+            return cleaned 
             
-            return None
         except Exception as e:
-            logging.error(f"Error normalizing secret: {e}")
+            logging.error(f"Fel vid normalisering av Base32-hemlighet: {e}")
             return None
     
     def get_2fa_code(self) -> Optional[str]:
-        """Generate current 2FA code if secret is configured"""
+        """
+        Genererar den nuvarande 2FA-koden (TOTP).
+
+        Returns:
+            Den 6-siffriga TOTP-koden som en sträng, eller None om ingen hemlighet är konfigurerad eller om ett fel uppstår.
+        """
         if self._totp:
-            code = self._totp.now()
-            logging.info(f"Generated TOTP code: {code}")
-            return code
-        return None
-    
-    def get_alternative_codes(self, time_skew_seconds: int = 60) -> List[str]:
-        """
-        Generate alternative TOTP codes for times around current time.
-        Useful when there's time skew between server and client.
+            try:
+                code = self._totp.now()
+                logging.info(f"Genererad TOTP-kod: {code}")
+                return code
+            except Exception as e:
+                logging.error(f"Kunde inte generera TOTP-kod: {e}")
+                return None
+        else:
+            logging.warning("Försökte generera 2FA-kod men ingen TOTP-hemlighet är konfigurerad.")
+            return None
         
-        Args:
-            time_skew_seconds: Maximum time skew to account for in seconds
-            
-        Returns:
-            List of possible codes around current time
+    def verify_2fa_code(self, code: str, for_time: Optional[int] = None, valid_window: int = 1) -> bool:
         """
-        codes: List[str] = []
+        Verifierar om en given 2FA-kod är giltig för den aktuella tiden (eller en specifik tidpunkt).
+
+        Args:
+            code: Koden som ska verifieras.
+            for_time: Tidsstämpel (sekunder sedan epoch) att verifiera mot. Använder aktuell tid om None.
+            valid_window: Antal tidsintervall (30s) framåt och bakåt som koden är giltig för. 
+                          Standard är 1 (nuvarande, föregående, nästa intervall).
+
+        Returns:
+            True om koden är giltig, annars False.
+        """
         if not self._totp:
-            return codes
-            
-        # Current time
-        current_time = int(time.time())
-        logging.info(f"Current time: {current_time}")
-        
-        # Generate codes for times around current time
-        for offset in range(-time_skew_seconds, time_skew_seconds + 1, 30):
-            if offset == 0:
-                continue  # Skip current time (already returned by get_2fa_code)
-                
-            # Generate code for time with offset
-            offset_time = current_time + offset
-            code = self._totp.at(offset_time)
-            codes.append(code)
-            logging.info(f"Generated code for time offset {offset} seconds: {code}")
-            
-        # Also try with different digest algorithms
-        try:
-            if self.totp_secret:
-                normalized_secret = self._normalize_secret(self.totp_secret)
-                if normalized_secret:
-                    # Try SHA256 instead of default SHA1
-                    totp_sha256 = pyotp.TOTP(normalized_secret, digest=hashlib.sha256)
-                    code_sha256 = totp_sha256.now()
-                    codes.append(code_sha256)
-                    logging.info(f"Generated code with SHA256: {code_sha256}")
-                    
-                    # Try with 8 digits instead of 6
-                    totp_8digits = pyotp.TOTP(normalized_secret, digits=8)
-                    code_8digits = totp_8digits.now()
-                    codes.append(code_8digits)
-                    logging.info(f"Generated 8-digit code: {code_8digits}")
-        except Exception as e:
-            logging.warning(f"Error generating alternative algorithm codes: {e}")
-            
-        return codes
-    
-    def get_multiple_algorithm_codes(self) -> Dict[str, str]:
-        """
-        Generate TOTP codes with different algorithms and settings
-        
-        Returns:
-            Dictionary of format {description: code}
-        """
-        results: Dict[str, str] = {}
-        if not self.totp_secret:
-            return results
-            
-        normalized_secret = self._normalize_secret(self.totp_secret)
-        if not normalized_secret:
-            return results
+            logging.warning("Försökte verifiera 2FA-kod men ingen TOTP-hemlighet är konfigurerad.")
+            return False
             
         try:
-            # Standard algorithm (SHA1, 6 digits, 30s interval)
-            standard_totp = pyotp.TOTP(normalized_secret)
-            results["standard"] = standard_totp.now()
+            # Konvertera tidsstämpel till datetime-objekt om nödvändigt
+            target_dt: Optional[datetime] = None
+            if for_time is not None:
+                try:
+                    # Antag att for_time är en Unix-tidsstämpel (sekunder sedan epoch)
+                    target_dt = datetime.fromtimestamp(for_time, tz=timezone.utc)
+                except TypeError:
+                     logging.error(f"Ogiltigt format för for_time: {for_time}. Förväntade sig en numerisk tidsstämpel.")
+                     return False
+                     
+            # Anropa verify med korrekt typ (datetime eller None)
+            is_valid = self._totp.verify(code, for_time=target_dt, valid_window=valid_window)
             
-            # SHA256
-            sha256_totp = pyotp.TOTP(normalized_secret, digest=hashlib.sha256)
-            results["sha256"] = sha256_totp.now()
-            
-            # SHA512
-            sha512_totp = pyotp.TOTP(normalized_secret, digest=hashlib.sha512)
-            results["sha512"] = sha512_totp.now()
-            
-            # Different digit lengths
-            digits7_totp = pyotp.TOTP(normalized_secret, digits=7)
-            results["7digits"] = digits7_totp.now()
-            
-            digits8_totp = pyotp.TOTP(normalized_secret, digits=8)
-            results["8digits"] = digits8_totp.now()
-            
-            # Different intervals
-            interval60_totp = pyotp.TOTP(normalized_secret, interval=60)
-            results["60s_interval"] = interval60_totp.now()
-            
-            # Custom HOTP implementation as fallback
-            counter = int(time.time()) // 30
-            results["custom_hotp"] = self._custom_hotp(normalized_secret, counter)
-            
+            if is_valid:
+                logging.info(f"Verifiering av kod '{code}' lyckades.")
+            else:
+                logging.info(f"Verifiering av kod '{code}' misslyckades.")
+            return is_valid
         except Exception as e:
-            logging.error(f"Error generating multi-algorithm codes: {e}")
-            
-        for desc, code in results.items():
-            logging.info(f"Generated code with {desc}: {code}")
-            
-        return results
-    
-    def _custom_hotp(self, secret: str, counter: int, digits: int = 6) -> str:
-        """
-        Custom HOTP implementation as a fallback
-        
-        Args:
-            secret: Base32 encoded secret
-            counter: Counter value
-            digits: Number of digits in the code
-            
-        Returns:
-            HOTP code
-        """
-        try:
-            # Decode the base32 secret
-            key = base64.b32decode(secret, casefold=True)
-            
-            # Convert counter to bytes
-            counter_bytes = struct.pack(">Q", counter)
-            
-            # Calculate HMAC-SHA1
-            h = hmac.new(key, counter_bytes, hashlib.sha1).digest()
-            
-            # Dynamic truncation
-            offset = h[-1] & 0x0F
-            binary = ((h[offset] & 0x7F) << 24 |
-                     (h[offset + 1] & 0xFF) << 16 |
-                     (h[offset + 2] & 0xFF) << 8 |
-                     (h[offset + 3] & 0xFF))
-            
-            # Generate code
-            code = binary % (10 ** digits)
-            return str(code).zfill(digits)
-        except Exception as e:
-            logging.error(f"Error in custom HOTP: {e}")
-            return ""
+             logging.error(f"Fel vid verifiering av TOTP-kod: {e}")
+             return False
         
     @staticmethod
     def generate_new_secret() -> str:
-        """Generate a new TOTP secret key"""
-        return pyotp.random_base32()
-    
-    def verify_2fa_code(self, code: str) -> bool:
-        """Verify if a given 2FA code is valid"""
-        if not self._totp:
-            return False
-        return self._totp.verify(code) 
+        """Genererar en ny slumpmässig Base32 TOTP-hemlighet."""
+        new_secret = pyotp.random_base32()
+        logging.info(f"Ny TOTP-hemlighet genererad: {new_secret}")
+        return new_secret
+
+# Kommentar: Tog bort metoderna get_alternative_codes, get_multiple_algorithm_codes, _custom_hotp 
+# då standard TOTP visade sig fungera och detta förenklar koden avsevärt.
+# Förbättrade normaliseringen av hemligheten och lade till mer robust felhantering och loggning.
+# Uppdaterade docstrings till svenska. 

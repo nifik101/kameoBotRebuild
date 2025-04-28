@@ -1,105 +1,95 @@
-# Kameo Bot
+# Kameo Bot - Hämta Kontonummer
 
-A Python client for automating interactions with Kameo's investor platform. Features proper session management, 2FA support, and robust error handling.
+Detta Python-skript loggar in på Kameos webbplats, hanterar tvåfaktorsautentisering (2FA/TOTP) om det är konfigurerat, och hämtar användarens kontonummer från dashboard-sidan.
 
-## Features
+## Funktioner
 
-- Secure configuration management using Pydantic
-- TOTP-based 2FA support
-- Proper session and redirect handling
-- Comprehensive test coverage
-- Environment variable support
+*   Loggar in på Kameo med e-post och lösenord.
+*   Hanterar 2FA med TOTP (Google Authenticator, Authy, etc.) om en hemlighet anges.
+*   Hämtar och skriver ut användarens kontonummer.
+*   Använder `requests` för HTTP-anrop och `BeautifulSoup` för HTML-parsning.
+*   Läser konfiguration från miljövariabler eller en `.env`-fil via `pydantic-settings`.
+*   Detaljerad loggning av processen.
 
 ## Installation
 
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd kameo-bot
+1.  **Klona repot (om du inte redan gjort det):**
+    ```bash
+    git clone <repo-url>
+    cd <repo-mapp>
+    ```
+
+2.  **Skapa en virtuell miljö (rekommenderas):**
+    ```bash
+    python3 -m venv .venv
+    source .venv/bin/activate  # Linux/macOS
+    # eller
+    # .venv\Scripts\activate  # Windows
+    ```
+
+3.  **Installera beroenden:**
+    ```bash
+    pip install -r requirements.txt
+    ```
+    *(Om `requirements.txt` inte finns, behöver den skapas. Kör `pip freeze > requirements.txt` efter att ha installerat paketen nedan manuellt)*
+    *   `requests`
+    *   `beautifulsoup4`
+    *   `pydantic`
+    *   `pydantic-settings`
+    *   `python-dotenv`
+    *   `pyotp`
+
+## Konfiguration
+
+Skriptet konfigureras via miljövariabler eller en `.env`-fil i samma mapp som `kameo_fetcher.py`.
+
+Skapa en fil med namnet `.env` och lägg till följande variabler:
+
+```dotenv
+# Obligatoriska
+KAMEO_EMAIL="din.epost@example.com"
+KAMEO_PASSWORD="ditt_kameo_losenord"
+
+# Obligatorisk om du använder 2FA/TOTP hos Kameo
+KAMEO_TOTP_SECRET="DIN_BASE32_KODADE_TOTP_HEMLIGHET"
+
+# Valfria (har standardvärden)
+# KAMEO_BASE_URL="https://www.kameo.se"
+# KAMEO_CONNECT_TIMEOUT=5.0
+# KAMEO_READ_TIMEOUT=10.0
+# KAMEO_MAX_REDIRECTS=5
+# KAMEO_USER_AGENT="KameoBot/1.0 (Python Requests)"
 ```
 
-2. Create and activate a virtual environment:
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-```
+**Viktigt:**
 
-3. Install dependencies:
-```bash
-pip install -r requirements.txt
-```
+*   Ersätt platshållarna med dina faktiska uppgifter.
+*   `KAMEO_TOTP_SECRET` är den Base32-kodade hemlighet du får när du konfigurerar 2FA i din authenticator-app. Den ser ofta ut som en serie versaler och siffrorna 2-7.
+*   Om du inte använder 2FA hos Kameo kan du utelämna `KAMEO_TOTP_SECRET` eller lämna värdet tomt.
 
-## Configuration
+## Användning
 
-The bot can be configured using environment variables or by creating a `.env` file:
-
-```env
-KAMEO_EMAIL=your.email@example.com
-KAMEO_PASSWORD=your-password
-KAMEO_TOTP_SECRET=your-2fa-secret  # Optional
-KAMEO_BASE_URL=https://www.kameo.se  # Optional
-```
-
-Required environment variables:
-- `KAMEO_EMAIL`: Your Kameo login email
-- `KAMEO_PASSWORD`: Your Kameo password
-
-Optional environment variables:
-- `KAMEO_TOTP_SECRET`: Your 2FA secret key (if 2FA is enabled)
-- `KAMEO_BASE_URL`: Alternative base URL (default: https://www.kameo.se)
-- `KAMEO_CONNECT_TIMEOUT`: Connection timeout in seconds (default: 5.0)
-- `KAMEO_READ_TIMEOUT`: Read timeout in seconds (default: 10.0)
-
-## Usage
-
-Basic usage example:
-
-```python
-from config import KameoConfig
-from get_it_done import KameoClient
-
-# Configuration will be loaded from environment variables
-config = KameoConfig()
-client = KameoClient(config)
-
-# Login and handle 2FA
-if client.login() and client.handle_2fa():
-    # Get account information
-    account_number = client.get_account_number()
-    print(f"Account number: {account_number}")
-```
-
-## Testing
-
-Run the test suite:
+När du har installerat beroenden och skapat `.env`-filen, kör skriptet från terminalen:
 
 ```bash
-pytest
+python kameo_fetcher.py
 ```
 
-Run with coverage report:
+Skriptet kommer att logga sina steg i terminalen och avsluta med att skriva ut kontonumret om det lyckas, eller ett felmeddelande om något går fel.
 
-```bash
-pytest --cov=. --cov-report=term-missing
-```
+## Kodstruktur
 
-## Error Handling
+*   `kameo_fetcher.py`: Huvudskriptet som innehåller `KameoClient`-klassen och `main`-funktionen.
+*   `config.py`: Definierar `KameoConfig`-klassen för att hantera konfiguration via `pydantic-settings`.
+*   `auth.py`: Definierar `KameoAuthenticator`-klassen för att hantera TOTP-generering.
+*   `.env`: Fil för att lagra känsliga konfigurationsuppgifter (bör inte versionshanteras om repot är publikt).
+*   `requirements.txt`: Lista över Python-beroenden.
 
-The client includes comprehensive error handling:
+## Felsökning
 
-- Network errors are logged and raised as exceptions
-- 2FA failures are properly handled
-- Redirect loops are prevented
-- Timeouts are properly managed
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run the test suite
-5. Submit a pull request
-
-## License
-
-MIT License - see LICENSE file for details 
+*   **Valideringsfel vid start:** Kontrollera att `KAMEO_EMAIL` och `KAMEO_PASSWORD` är satta i `.env`-filen eller som miljövariabler.
+*   **Inloggning misslyckas:** Kontrollera att e-post och lösenord är korrekta.
+*   **2FA misslyckas:**
+    *   Kontrollera att `KAMEO_TOTP_SECRET` är korrekt angiven i Base32-format.
+    *   Säkerställ att klockan på datorn där skriptet körs är synkroniserad (NTP).
+*   **Kontonummer hittas ej:** Webbplatsens struktur kan ha ändrats. Undersök loggarna (`logging.debug`-nivå kan ge mer info om HTML) och eventuellt spara HTML-sidorna som är utkommenterade i koden för manuell analys. Uppdatera CSS-selektorerna i `get_account_number`-metoden vid behov. 
