@@ -1,8 +1,9 @@
 requests>=2.31.0
 beautifulsoup4>=4.12.0
 pyotp>=2.9.0
-pydantic>=2.6.0
-pydantic-settings>=2.2.0  # For Pydantic v2 settings management
+pydantic>=2.11.3
+pydantic-settings>=2.9.0  # For Pydantic v2 settings management
 pytest>=8.0.0
 responses>=0.24.0
 python-dotenv>=1.0.0  # For environment variable management 
+ruff>=0.11.7

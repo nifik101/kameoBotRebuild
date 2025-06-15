@@ -16,6 +16,7 @@ class KameoConfig(BaseSettings):
     totp_secret: Optional[str] = Field(default=None, description="Base32-kodad TOTP-hemlighet för 2FA.")
     user_agent: str = Field(default="KameoBot/1.0 (Python Requests)", description="User-Agent header att skicka med requests.")
 
+    @classmethod
     @validator('base_url')
     def validate_base_url(cls, v: str) -> str:
         """Validerar att base_url är en giltig HTTP/HTTPS URL."""

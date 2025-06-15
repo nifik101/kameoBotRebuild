@@ -7,7 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Separated configuration into `config.py` using Pydantic.
+- Separated authentication logic into `auth.py` using `pyotp`.
+- Added `README.md` for project documentation.
+- Added `.gitignore` file.
+- Added `changelog.md` for tracking changes.
+- Added `requirements.txt` to list dependencies.
+
 ### Changed
+- Restructured project from a single script to multiple modules.
 - Renamed `kameo_fetcher.py` to `kameo_client.py` and the class `KameoFetcher` to `KameoClient`.
 - Updated imports in `test_kameo.py` to match the new file name.
 - Fixed linting errors using `ruff`.
