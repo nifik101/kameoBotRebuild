@@ -17,8 +17,9 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from ..models.loan import LoanCreate, LoanStatus
-from config import KameoConfig
-from auth import KameoAuthenticator
+from src.config import KameoConfig
+from src.auth import KameoAuthenticator
+from src.kameo_client import KameoClient
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +106,7 @@ class LoanCollectorService:
         """
         try:
             # Import here to avoid circular imports
-            from kameo_client import KameoClient
+            from src.kameo_client import KameoClient
             
             # Create a temporary client for authentication
             client = KameoClient(self.config)

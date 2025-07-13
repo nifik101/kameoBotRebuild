@@ -43,7 +43,7 @@ load_dotenv()
 
 # Import project modules
 try:
-    from config import KameoConfig
+    from src.config import KameoConfig
     from src.database.config import DatabaseConfig
     from src.database.connection import init_database
     from src.services.loan_collector import LoanCollectorService

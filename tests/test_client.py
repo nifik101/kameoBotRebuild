@@ -5,9 +5,9 @@ import requests
 # No longer need importlib or module reload
 # import importlib 
 # import config as config_module
-from config import KameoConfig # Import the class directly
-from auth import KameoAuthenticator
-from kameo_client import KameoClient
+from src.config import KameoConfig # Import the class directly
+from src.auth import KameoAuthenticator
+from src.kameo_client import KameoClient
 
 
 @pytest.fixture

@@ -18,7 +18,7 @@ try:
     from src.services.loan_collector import LoanCollectorService
     from src.services.loan_repository import LoanRepository
     from src.database.config import DatabaseConfig
-    from config import KameoConfig
+    from src.config import KameoConfig
 except ImportError as e:
     pytest.skip(f"Required modules not available: {e}", allow_module_level=True)
 

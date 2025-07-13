@@ -6,9 +6,9 @@ import time
 from typing import Optional
 import re # Importeras för get_account_number
 
-# Importera konfiguration och autentiserare
-from config import KameoConfig
-from auth import KameoAuthenticator
+# Importera konfiguration och autentiserare från src-paketet
+from src.config import KameoConfig
+from src.auth import KameoAuthenticator
 from pydantic import ValidationError
 
 # Ladda miljövariabler från .env-fil. 
@@ -34,7 +34,10 @@ class KameoClient:
         """
         self.config = config
         self.session = requests.Session()
-        self.authenticator = KameoAuthenticator(config.totp_secret)
+        if config.totp_secret:
+            self.authenticator: Optional[KameoAuthenticator] = KameoAuthenticator(config.totp_secret)
+        else:
+            self.authenticator: Optional[KameoAuthenticator] = None
         
         # Sätt User-Agent och Accept-header för sessionen
         self.session.headers.update({
@@ -248,167 +251,170 @@ class KameoClient:
                 return False
 
         except requests.exceptions.RequestException as e:
-            # Fel loggas redan i _make_request
-            logging.error(f"Hantering av 2FA misslyckades: {e}")
+            logging.error(f"2FA-hantering misslyckades: {e}")
             return False
 
     def get_account_number(self) -> Optional[str]:
         """
-        Hämtar kontonumret från Kameos API efter lyckad inloggning.
-        Försöker först via JSON-API:t /ezjscore/call/kameo_transfer::init (rekommenderat och robust!),
-        och faller tillbaka på HTML-parsning av dashboard om API-anropet misslyckas.
+        Hämtar användarens kontonummer genom att först försöka API-anropet,
+        och falla tillbaka på HTML-parsning om det misslyckas.
+
+        Returns:
+            Kontonumret som en sträng om det hittas, annars None.
+        """
+        # Försök först med API-anropet
+        api_account_number = self.get_account_number_from_api()
+        if api_account_number:
+            return api_account_number
+        
+        # Om API misslyckas, falla tillbaka på HTML-parsning
+        logging.warning("API-anropet för kontonummer misslyckades, försöker HTML-parsning...")
+        return self.get_account_number_from_html()
+
+    def get_account_number_from_api(self) -> Optional[str]:
+        """
+        Hämtar kontonummer via Kameos JSON-API (primär metod).
 
         Returns:
             Kontonumret som en sträng om det hittas, annars None.
         """
         api_path = '/ezjscore/call/kameo_transfer::init'
-        logging.info(f"Försöker hämta kontonummer via API: {api_path} ...")
+        logging.info("Försöker hämta kontonummer via API...")
         try:
-            response = self._make_request('GET', api_path,
-                                         headers={
-                                             'Accept': 'application/json, text/plain, */*',
-                                             'Referer': self.config.get_full_url('/investor/dashboard'),
-                                             'Origin': self.config.base_url
-                                         })
-            logging.info(f"API-svar: Status={response.status_code}, URL={response.url}")
-            data = response.json()
-            # Navigera till accounts-listan
-            accounts = data.get('content', {}).get('data', {}).get('accounts', [])
-            if not accounts:
-                logging.error("Kunde inte hitta någon accounts-lista i API-svaret.")
+            response = self._make_request('GET', api_path)
+            
+            # Försök tolka JSON-svaret
+            try:
+                data = response.json()
+                logging.debug(f"API-svar: {data}")
+                
+                # Navigera genom JSON-strukturen för att hitta kontonumret
+                # Baserat på observerad struktur: content -> account_number
+                if isinstance(data, dict) and 'content' in data:
+                    content = data['content']
+                    if isinstance(content, dict) and 'account_number' in content:
+                        account_number = content['account_number']
+                        if isinstance(account_number, str) and account_number.strip():
+                            logging.info(f"Kontonummer hämtat via API: {account_number}")
+                            return account_number.strip()
+                
+                # Om strukturen inte matchar förväntan
+                logging.warning("API-svaret har inte förväntad struktur för kontonummer")
+                logging.debug(f"Fullständigt API-svar: {data}")
                 return None
-            # Välj SEK-konto i första hand, annars första konto
-            account = next((a for a in accounts if a.get('currencyCode') == 'SEK'), accounts[0])
-            account_number = account.get('accountNo')
-            if account_number:
-                logging.info(f"Kontonummer hittat via API: {account_number}")
-                return account_number
-            else:
-                logging.error("Kunde inte hitta fältet 'accountNo' i det valda kontot.")
+                
+            except ValueError as e:
+                logging.error(f"Kunde inte tolka API-svar som JSON: {e}")
+                logging.debug(f"Raw API-svar: {response.text[:500]}...")
                 return None
-        except Exception as e:
-            logging.error(f"Fel vid hämtning av kontonummer via API: {e}")
-            logging.info("Försöker fallback till HTML-parsning av dashboard...")
+                
+        except requests.exceptions.RequestException as e:
+            logging.error(f"API-anrop för kontonummer misslyckades: {e}")
+            return None
 
-        # --- Fallback: HTML-parsning av dashboard (legacy, mindre robust) ---
+    def get_account_number_from_html(self) -> Optional[str]:
+        """
+        Hämtar kontonummer genom att parsa HTML från dashboard (fallback-metod).
+
+        Returns:
+            Kontonumret som en sträng om det hittas, annars None.
+        """
         dashboard_path = '/investor/dashboard'
+        logging.info("Försöker hämta kontonummer via HTML-parsning...")
         try:
             response = self._make_request('GET', dashboard_path)
-            logging.info(f"Dashboard hämtad: Status={response.status_code}, URL={response.url}")
-            if '/user/login' in response.url or '/auth/2fa' in response.url:
-                logging.error(f"Omdirigerad från dashboard till {response.url}. Inloggning troligen förlorad eller misslyckad.")
-                return None
             soup = BeautifulSoup(response.text, 'html.parser')
-            primary_selector = '.account-number'
-            account_elem = soup.select_one(primary_selector)
-            if isinstance(account_elem, Tag):
-                account_number = account_elem.text.strip()
-                if account_number:
-                    logging.info(f"Kontonummer hittat med selektor '{primary_selector}': {account_number}")
-                    return account_number
-            # Fallback: Prova andra selektorer
-            fallback_selectors = [
-                '.account-details .account-number',
-                'span.account-number',
-                'div.account-number',
-                '.account span',
-                '.account-id'
-            ]
-            for selector in fallback_selectors:
-                account_elem = soup.select_one(selector)
-                if isinstance(account_elem, Tag):
-                    account_number = account_elem.text.strip()
-                    if account_number:
-                        logging.info(f"Kontonummer hittat med fallback-selektor '{selector}': {account_number}")
-                        return account_number
-            logging.warning("Ingen av de definierade CSS-selektorerna gav ett kontonummer.")
-            # Fallback 2: Sök efter numeriska mönster i texten
-            logging.info("Försöker hitta kontonummer-liknande mönster i sidans text...")
-            account_patterns = [r'\b\d{7,10}\b']
-            page_text = soup.get_text(separator=' ', strip=True)
-            for pattern in account_patterns:
-                match = re.search(pattern, page_text)
-                if match:
-                    potential_account = match.group(0)
-                    logging.warning(f"Hittade ett *potentiellt* kontonummer med mönster '{pattern}': {potential_account}. Detta är en gissning.")
-                    # return potential_account
-            logging.error("Kunde inte extrahera kontonumret från dashboarden med någon metod.")
+            
+            # Försök hitta kontonumret med CSS-selektor
+            account_div = soup.select_one('.account-number')
+            if account_div and isinstance(account_div, Tag):
+                account_text = account_div.text.strip()
+                if account_text:
+                    logging.info(f"Kontonummer hämtat via HTML: {account_text}")
+                    return account_text
+            
+            # Om CSS-selektor inte fungerar, försök med regex
+            logging.warning("CSS-selektor för kontonummer misslyckades, försöker regex...")
+            account_match = re.search(r'kontonummer[:\s]*(\d+)', response.text, re.IGNORECASE)
+            if account_match:
+                account_number = account_match.group(1)
+                logging.info(f"Kontonummer hämtat via regex: {account_number}")
+                return account_number
+            
+            logging.error("Kunde inte hitta kontonummer på dashboard-sidan")
+            # Spara HTML för manuell inspektion (kommenterat för att undvika stora loggar)
+            # with open('dashboard_debug.html', 'w', encoding='utf-8') as f:
+            #     f.write(response.text)
+            # logging.info("Dashboard HTML sparad som 'dashboard_debug.html' för manuell inspektion")
             return None
-        except Exception as e:
-            logging.error(f"Kunde inte hämta eller analysera dashboard: {e}")
-            return None
+            
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Kunde inte hämta dashboard för kontonummer: {e}")
+            return False
 
 def load_configuration() -> Optional[KameoConfig]:
     """
-    Försöker ladda konfigurationen från miljövariabler och .env-filen.
-    Använder KameoConfig som är baserad på pydantic-settings.
+    Laddar konfiguration från miljövariabler med felhantering.
 
     Returns:
-        Ett KameoConfig-objekt om lyckat, annars None.
+        Ett KameoConfig-objekt om konfigurationen är giltig, annars None.
     """
     try:
-        config = KameoConfig() # Läser automatiskt från env och .env via model_config
+        config = KameoConfig()
         logging.info("Konfiguration laddad framgångsrikt.")
-        # Validering av t.ex. base_url sker automatiskt av Pydantic
         return config
     except ValidationError as e:
-        logging.error(f"Valideringsfel vid laddning av konfiguration: {e}")
-        # Logga specifikt vilka fält som saknas eller är felaktiga
+        logging.error(f"Konfigurationsfel: {e}")
+        # Visa specifika fel för varje fält
         for error in e.errors():
-             # Korrekt sätt att få fältnamnet
-             loc = '.'.join(map(str, error.get('loc', [])))
-             msg = error.get('msg', 'Okänt fel')
-             logging.error(f"  - Fält '{loc}': {msg}")
+            field = " -> ".join(str(loc) for loc in error['loc'])
+            message = error['msg']
+            logging.error(f"  {field}: {message}")
         return None
     except Exception as e:
-        logging.error(f"Oväntat fel vid laddning av konfiguration: {e}")
+        logging.error(f"Oväntat fel vid konfigurationsladdning: {e}")
         return None
 
 def main():
-    """Huvudfunktion för att köra Kameo-inloggning och hämtning av kontonummer."""
-    logging.info("=== Startar Kameo Bot ===")
+    """Huvudfunktion för att demonstrera användningen av KameoClient."""
+    logging.info("Startar Kameo-klient...")
     
+    # Ladda konfiguration
     config = load_configuration()
     if not config:
-        logging.critical("Kunde inte ladda konfiguration. Avslutar.")
+        logging.error("Kunde inte ladda konfiguration. Avbryter.")
         return
 
-    # Skapa klienten med den laddade konfigurationen
+    # Skapa klient och försök logga in
     client = KameoClient(config)
     
-    # Kör inloggningsflödet
-    if not client.login():
-        logging.error("Inloggningsprocessen misslyckades.")
-        return # Avsluta om inloggning misslyckas
-    
-    # Hantera 2FA (nödvändigt om det är aktiverat)
-    if config.totp_secret: # Kör bara 2FA om en hemlighet är angiven
-        if not client.handle_2fa():
-            logging.error("2FA-autentisering misslyckades.")
-            return # Avsluta om 2FA misslyckas
-        logging.info("2FA-steg slutfört.")
-    else:
-         logging.info("Ingen TOTP-hemlighet konfigurerad, hoppar över 2FA-steget.")
-         # Notera: Om 2FA *krävs* av Kameo kommer nästa steg troligen misslyckas.
+    try:
+        # Steg 1: Logga in
+        if not client.login():
+            logging.error("Inloggning misslyckades. Avbryter.")
+            return
 
-    # Liten paus för att säkerställa att sessionen är helt etablerad efter eventuell 2FA
-    logging.debug("Pausar kort innan hämtning av dashboard...")
-    time.sleep(1)
-    
-    # Hämta kontonummer
-    account_number = client.get_account_number()
-    
-    # Skriv ut resultatet
-    if account_number:
-        print("\n=== RESULTAT ===")
-        print(f"Kontonummer: {account_number}")
-        print("================")
-    else:
-        print("\n=== FEL ===")
-        print("Kunde inte hämta kontonumret efter inloggning (och ev. 2FA). Kontrollera loggarna ovan för detaljer.")
-        print("===========")
+        # Steg 2: Hantera 2FA (om nödvändigt)
+        # Kontrollera om vi är på 2FA-sidan
+        current_response = client._make_request('GET', '/investor/dashboard')
+        if '/user/login' in current_response.url or '/auth/2fa' in current_response.url:
+            logging.info("2FA krävs...")
+            if not client.handle_2fa():
+                logging.error("2FA-autentisering misslyckades. Avbryter.")
+                return
 
-    logging.info("=== Kameo Bot Avslutad ===")
+        # Steg 3: Hämta kontonummer
+        account_number = client.get_account_number()
+        if account_number:
+            print(f"Kontonummer: {account_number}")
+            logging.info(f"Framgångsrikt hämtat kontonummer: {account_number}")
+        else:
+            logging.error("Kunde inte hämta kontonummer.")
+
+    except Exception as e:
+        logging.error(f"Ett oväntat fel inträffade: {e}")
+    
+    logging.info("Kameo-klient avslutad.")
 
 if __name__ == "__main__":
-    main()
+    main() 
