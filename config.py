@@ -1,4 +1,4 @@
-from pydantic import Field, HttpUrl, validator, ValidationError
+from pydantic import Field, HttpUrl, field_validator, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 from urllib.parse import urljoin
@@ -16,8 +16,8 @@ class KameoConfig(BaseSettings):
     totp_secret: Optional[str] = Field(default=None, description="Base32-kodad TOTP-hemlighet för 2FA.")
     user_agent: str = Field(default="KameoBot/1.0 (Python Requests)", description="User-Agent header att skicka med requests.")
 
+    @field_validator('base_url')
     @classmethod
-    @validator('base_url')
     def validate_base_url(cls, v: str) -> str:
         """Validerar att base_url är en giltig HTTP/HTTPS URL."""
         try:
@@ -39,5 +39,6 @@ class KameoConfig(BaseSettings):
         case_sensitive=False, # Ändrat till False, vanligare och mindre felbenäget
         # Läs från .env-fil automatiskt (om python-dotenv är installerat)
         env_file='.env', 
-        env_file_encoding='utf-8'
+        env_file_encoding='utf-8',
+        extra='ignore'
     ) 

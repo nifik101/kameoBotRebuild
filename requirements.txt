@@ -7,3 +7,7 @@ pytest>=8.0.0
 responses>=0.24.0
 python-dotenv>=1.0.0  # For environment variable management 
 ruff>=0.11.7
+sqlalchemy>=2.0.0  # For database ORM
+alembic>=1.13.0  # For database migrations
+click>=8.0.0  # For CLI interface
+httpx>=0.27.0  # For async HTTP requests

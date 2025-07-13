@@ -1,0 +1,47 @@
+# Cursor Project Rule: Python Development Standards
+
+## Title
+Python Development Standards for kameoBotRebuild
+
+## Description
+All Python code in this project must adhere to the following standards to ensure maintainability, clarity, and AI-assisted development.
+
+## Rules
+
+1. **Project Structure**
+   - Organize code into clear directories: `src/` for source, `tests/` for tests, `docs/` for documentation, `config/` for configuration.
+   - Keep models, services, controllers, and utilities in separate modules/files.
+
+2. **Modular Design**
+   - Write small, focused modules and functions with single responsibility.
+   - Avoid monolithic files; refactor large files into logical components.
+
+3. **Configuration Management**
+   - Use environment variables for all secrets and environment-specific settings.
+   - Store configuration logic in `config/` and never hardcode secrets in code.
+
+4. **Error Handling & Logging**
+   - Implement robust error handling with descriptive messages and context.
+   - Use structured logging; capture error context for debugging.
+
+5. **Testing**
+   - Write comprehensive tests using `pytest`.
+   - Place all tests in the `tests/` directory and use descriptive test names.
+
+6. **Documentation**
+   - Use docstrings for all public modules, classes, and functions.
+   - Maintain an up-to-date `README.md` and developer docs in `docs/`.
+
+7. **Code Style**
+   - Follow PEP8 for all Python code.
+   - Use descriptive variable and function names, and type hints throughout.
+   - Add detailed comments for complex logic.
+
+## AI-Friendly Coding Practices
+- Write code and comments to be easily understood by AI tools.
+- Prefer explicitness and clarity over cleverness.
+- Provide rich error context for debugging and AI analysis.
+
+---
+
+*This rule is derived from the original `.cursorrules` and follows Cursor's dev rule best practices. All contributors must comply.* 

@@ -1,0 +1,38 @@
+{
+  "data": {
+    "investment_options": [
+      {
+        "title": "Fastighetsbolag söker finansiering för att belåna fem markfastigheter i Strömma, Värmdö",
+        "teaser": "#4840 | Fastigheterna är värderade till totalt SEK 25 000 000",
+        "image": "https://platform-text-media-prod.s3.eu-north-1.amazonaws.com/486/4840/6854059d676d7.jpg",
+        "loan_application_id": 4840,
+        "application_amount": 12500000,
+        "annual_interest_rate": 10,
+        "duration_in_months": 12,
+        "is_listed": 0,
+        "available_kiis_languages": "SE",
+        "risk_score": "B",
+        "subscribed_amount": 12479500,
+        "subscription_state": {
+          "state_id": 30,
+          "status_text_localized": "Tilldelning"
+        },
+        "listing_date": "2025-07-07T11:11:55+02:00",
+        "subscription_starts_at": "2025-07-07T14:00:00+02:00",
+        "subscription_ends_at": "2025-07-10T23:59:00+02:00",
+        "allocation_type_id": 2,
+        "book_building_duration": 1440,
+        "currency": "SEK",
+        "min_amount": 500,
+        "underwriter_state": 0,
+        "fully_funded_state": 0,
+        "my_bid_amount": 0
+      }
+    ],
+    "result_count": 1,
+    "current_page": 1,
+    "per_page": 12,
+    "total": 1,
+    "last_page": 1
+  }
+}

@@ -31,9 +31,9 @@ Detta Python-skript loggar in på Kameos webbplats, hanterar tvåfaktorsautentis
 
 3.  **Installera beroenden:**
     ```bash
-    pip install -r requirements.txt
+    uv pip install -r requirements.txt
     ```
-    *(Om `requirements.txt` inte finns, behöver den skapas. Kör `pip freeze > requirements.txt` efter att ha installerat paketen nedan manuellt)*
+    *(Om `requirements.txt` inte finns, behöver den skapas. Kör `uv pip freeze > requirements.txt` efter att ha installerat paketen nedan manuellt)*
     *   `requests`
     *   `beautifulsoup4`
     *   `pydantic`
