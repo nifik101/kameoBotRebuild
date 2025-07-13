@@ -1,12 +1,14 @@
 # Kameo Bot - Hämta Kontonummer
 
-Detta Python-skript loggar in på Kameos webbplats, hanterar tvåfaktorsautentisering (2FA/TOTP) om det är konfigurerat, och hämtar användarens kontonummer från dashboard-sidan.
+Detta Python-skript loggar in på Kameos webbplats, hanterar tvåfaktorsautentisering (2FA/TOTP) om det är konfigurerat, och hämtar användarens kontonummer från Kameos API (eller dashboard-sidan som fallback).
 
 ## Funktioner
 
 *   Loggar in på Kameo med e-post och lösenord.
 *   Hanterar 2FA med TOTP (Google Authenticator, Authy, etc.) om en hemlighet anges.
 *   Hämtar och skriver ut användarens kontonummer.
+*   **Hämtar kontonummer via Kameos JSON-API** (`/ezjscore/call/kameo_transfer::init`) för robusthet mot sidändringar.
+*   Om API-anropet misslyckas används HTML-parsning av dashboard som fallback.
 *   Använder `requests` för HTTP-anrop och `BeautifulSoup` för HTML-parsning.
 *   Läser konfiguration från miljövariabler eller en `.env`-fil via `pydantic-settings`.
 *   Detaljerad loggning av processen.
@@ -92,4 +94,69 @@ Skriptet kommer att logga sina steg i terminalen och avsluta med att skriva ut k
 *   **2FA misslyckas:**
     *   Kontrollera att `KAMEO_TOTP_SECRET` är korrekt angiven i Base32-format.
     *   Säkerställ att klockan på datorn där skriptet körs är synkroniserad (NTP).
-*   **Kontonummer hittas ej:** Webbplatsens struktur kan ha ändrats. Undersök loggarna (`logging.debug`-nivå kan ge mer info om HTML) och eventuellt spara HTML-sidorna som är utkommenterade i koden för manuell analys. Uppdatera CSS-selektorerna i `get_account_number`-metoden vid behov. 
+*   **Kontonummer hittas ej:**
+    *   Kontrollera loggarna. Om API-anropet mot `/ezjscore/call/kameo_transfer::init` misslyckas, försöker skriptet parsa HTML från dashboarden som fallback.
+    *   Om både API och HTML-parsning misslyckas, kan webbplatsens struktur ha ändrats. Undersök loggarna (`logging.debug`-nivå kan ge mer info om HTML) och eventuellt spara HTML-sidorna som är utkommenterade i koden för manuell analys. Uppdatera CSS-selektorerna i `get_account_number`-metoden vid behov.
+
+## Notis om kontonummer-hämtning
+
+> **Från och med [Unreleased]:** Kontonummer hämtas nu primärt via Kameos JSON-API (`/ezjscore/call/kameo_transfer::init`). Detta är robustare mot ändringar i sidlayouten. Om API-anropet misslyckas används HTML-parsning av dashboard som fallback.
+
+# TODO & PRD: Selenium → FastAPI-migrering
+
+## Produktkrav (PRD)
+
+**Syfte:**
+Migrera affärslogik och API-flöden från Selenium-baserad browser automation till en modern FastAPI-backend, med automatiserad modell- och endpointgenerering, robust testning och CI/CD.
+
+**Mål:**
+- Fånga och analysera all HTTP-trafik från Selenium-flöden
+- Generera Pydantic-modeller och FastAPI-endpoints automatiskt
+- Flytta affärslogik till backend
+- Säkerställa testtäckning och CI/CD
+
+---
+
+## TODO-lista (migreringsplan)
+
+### 1. Förberedelse & Miljö
+- [ ] Säkerställ att alla beroenden finns i `pyproject.toml` (uv, selenium-wire, fastapi, pydantic, httpx, pytest, ruff)
+- [ ] Skapa feature branch: `feature/migrate-api-capture`
+
+### 2. HTTP-trafikinsamling från Selenium
+- [ ] Modifiera Selenium-setup (Selenium Wire) för att logga HTTP-trafik
+- [ ] Skapa script: `scripts/capture_har.py` som kör Selenium-flöde och sparar HAR/JSON
+- [ ] Spara output i `logs/har/`
+
+### 3. Analys & Modellgenerering
+- [ ] Skapa script: `scripts/generate_models.py` som läser HAR/JSON och genererar Pydantic-modeller samt förslag på FastAPI-endpoints
+- [ ] Spara modeller i `src/models/auto_generated.py` och endpoints i `src/api/auto_generated.py`
+
+### 4. FastAPI-backend & Refaktorering
+- [ ] Skapa/uppdatera FastAPI-appstruktur enligt repo-regler
+- [ ] Implementera endpoints med genererade modeller
+- [ ] Flytta affärslogik från Selenium-skript till FastAPI-tjänster
+- [ ] Implementera autentisering/session (JWT/cookies) om det behövs
+
+### 5. Testning
+- [ ] Skriv pytest-tester med httpx.AsyncClient för varje endpoint
+- [ ] Säkerställ testtäckning för alla flöden
+
+### 6. Kvalitet & Dokumentation
+- [ ] Lintning med Ruff, typkontroll med Pydantic
+- [ ] Uppdatera README och auto-generera OpenAPI/Swagger
+- [ ] Dokumentera capture-script, modellgenerering och API-start
+
+### 7. CI/CD & Deployment
+- [ ] Uppdatera Docker/uv/compose-manifest för nya endpoints
+- [ ] Lägg till pipeline-steg för automatiska API-tester
+- [ ] Säkerställ att HAR-filer/loggar sparas för felsökning
+
+---
+
+**Ansvar:**
+- Backend/API: AI-assistent + utvecklingsteam
+- Test & QA: Utvecklingsteam
+- DevOps/CI: DevOps-ansvarig
+
+--- 

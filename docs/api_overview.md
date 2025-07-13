@@ -33,7 +33,7 @@ Detta dokument ger en kort beskrivning av huvudklasserna i Kameo Bot-projektet.
         *   `_make_request`: En intern hjälpmetod för att göra standardiserade HTTP-anrop med felhantering och timeouts.
         *   `login`: Hanterar det första inloggningssteget med e-post och lösenord.
         *   `handle_2fa`: Hanterar 2FA-processen (hämtar sida, extraherar token, genererar kod via `KameoAuthenticator`, skickar kod).
-        *   `get_account_number`: Hämtar dashboard-sidan och försöker parsa ut kontonumret med `BeautifulSoup`.
+        *   `get_account_number`: **Hämtar kontonummer via Kameos JSON-API (`/ezjscore/call/kameo_transfer::init`).** Om API-anropet misslyckas används HTML-parsning av dashboard som fallback. Detta är robustare mot ändringar i sidlayouten och följer det faktiska flödet enligt HAR-filerna.
 *   **Användning:** Ett `KameoClient`-objekt skapas i `main`-funktionen. Metoderna `login`, `handle_2fa` (om nödvändigt) och `get_account_number` anropas i sekvens för att slutföra uppgiften.
 
 ## `get_it_done.py` - `main` och `load_configuration`

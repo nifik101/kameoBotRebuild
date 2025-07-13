@@ -11,7 +11,7 @@ Denna kod implementerar en Python-klient för att automatisera interaktioner med
     *   Orkestrerar inloggningsflödet genom att göra HTTP GET/POST-anrop till Kameos inloggnings- och 2FA-sidor.
     *   Använder `requests.Session` för att behålla cookies mellan anrop.
     *   Extraherar nödvändig information (t.ex. formulär-tokens) från HTML med `BeautifulSoup`.
-    *   Hämtar kontonumret från användarens dashboard efter lyckad inloggning.
+    *   **Hämtar kontonummer via Kameos JSON-API (`/ezjscore/call/kameo_transfer::init`).** Om API-anropet misslyckas används HTML-parsning av dashboard som fallback. Detta är robustare mot ändringar i sidlayouten och följer det faktiska flödet enligt HAR-filerna.
     *   Innehåller en `main`-funktion för att demonstrera användningen.
 *   **Testning (`test_kameo.py`):** Innehåller enhetstester med `pytest` och `responses` för att verifiera konfigurationsladdning, 2FA-logik och det simulerade inloggningsflödet utan att göra riktiga nätverksanrop.
 

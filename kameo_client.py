@@ -254,86 +254,87 @@ class KameoClient:
 
     def get_account_number(self) -> Optional[str]:
         """
-        Hämtar kontonumret från användarens dashboard efter lyckad inloggning.
+        Hämtar kontonumret från Kameos API efter lyckad inloggning.
+        Försöker först via JSON-API:t /ezjscore/call/kameo_transfer::init (rekommenderat och robust!),
+        och faller tillbaka på HTML-parsning av dashboard om API-anropet misslyckas.
 
         Returns:
             Kontonumret som en sträng om det hittas, annars None.
         """
+        api_path = '/ezjscore/call/kameo_transfer::init'
+        logging.info(f"Försöker hämta kontonummer via API: {api_path} ...")
+        try:
+            response = self._make_request('GET', api_path,
+                                         headers={
+                                             'Accept': 'application/json, text/plain, */*',
+                                             'Referer': self.config.get_full_url('/investor/dashboard'),
+                                             'Origin': self.config.base_url
+                                         })
+            logging.info(f"API-svar: Status={response.status_code}, URL={response.url}")
+            data = response.json()
+            # Navigera till accounts-listan
+            accounts = data.get('content', {}).get('data', {}).get('accounts', [])
+            if not accounts:
+                logging.error("Kunde inte hitta någon accounts-lista i API-svaret.")
+                return None
+            # Välj SEK-konto i första hand, annars första konto
+            account = next((a for a in accounts if a.get('currencyCode') == 'SEK'), accounts[0])
+            account_number = account.get('accountNo')
+            if account_number:
+                logging.info(f"Kontonummer hittat via API: {account_number}")
+                return account_number
+            else:
+                logging.error("Kunde inte hitta fältet 'accountNo' i det valda kontot.")
+                return None
+        except Exception as e:
+            logging.error(f"Fel vid hämtning av kontonummer via API: {e}")
+            logging.info("Försöker fallback till HTML-parsning av dashboard...")
+
+        # --- Fallback: HTML-parsning av dashboard (legacy, mindre robust) ---
         dashboard_path = '/investor/dashboard'
-        logging.info(f"Försöker hämta kontonummer från {dashboard_path}...")
         try:
             response = self._make_request('GET', dashboard_path)
             logging.info(f"Dashboard hämtad: Status={response.status_code}, URL={response.url}")
-            
-            # Dubbelkolla att vi faktiskt är på dashboarden och inte omdirigerats tillbaka
             if '/user/login' in response.url or '/auth/2fa' in response.url:
                 logging.error(f"Omdirigerad från dashboard till {response.url}. Inloggning troligen förlorad eller misslyckad.")
                 return None
-
-            # Spara HTML för felsökning vid behov
-            # try:
-            #     with open("dashboard_final.html", "w", encoding="utf-8") as f:
-            #         f.write(response.text)
-            #     logging.debug("Sparade dashboard HTML till dashboard_final.html")
-            # except Exception as e:
-            #     logging.error(f"Kunde inte spara dashboard_final.html: {e}")
-
             soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Försök hitta kontonumret med den primära selektorn från Postman
-            primary_selector = '.account-number' # Denna fungerade i Postman
+            primary_selector = '.account-number'
             account_elem = soup.select_one(primary_selector)
-            
             if isinstance(account_elem, Tag):
                 account_number = account_elem.text.strip()
                 if account_number:
                     logging.info(f"Kontonummer hittat med selektor '{primary_selector}': {account_number}")
                     return account_number
-                else:
-                     logging.warning(f"Element med selektor '{primary_selector}' hittades men saknade textinnehåll.")
-            else:
-                logging.warning(f"Kunde inte hitta element med primär selektor '{primary_selector}'.")
-
-            # Fallback: Prova några andra möjliga selektorer (mindre troliga nu)
+            # Fallback: Prova andra selektorer
             fallback_selectors = [
                 '.account-details .account-number',
                 'span.account-number',
                 'div.account-number',
-                '.account span', 
-                '.account-id' 
+                '.account span',
+                '.account-id'
             ]
             for selector in fallback_selectors:
                 account_elem = soup.select_one(selector)
                 if isinstance(account_elem, Tag):
                     account_number = account_elem.text.strip()
                     if account_number:
-                         logging.info(f"Kontonummer hittat med fallback-selektor '{selector}': {account_number}")
-                         return account_number
-            
+                        logging.info(f"Kontonummer hittat med fallback-selektor '{selector}': {account_number}")
+                        return account_number
             logging.warning("Ingen av de definierade CSS-selektorerna gav ett kontonummer.")
-            
             # Fallback 2: Sök efter numeriska mönster i texten
-            # Denna metod är osäker och kan ge falska positiva
             logging.info("Försöker hitta kontonummer-liknande mönster i sidans text...")
-            account_patterns = [
-                r'\b\d{7,10}\b',  # 7-10 siffror (vanligt kontonummerformat?)
-                # Lägg till fler mönster vid behov, t.ex. r'\b\d{4}[-\s]?\d{7,}\b' för clearing + konto
-            ]
+            account_patterns = [r'\b\d{7,10}\b']
             page_text = soup.get_text(separator=' ', strip=True)
             for pattern in account_patterns:
                 match = re.search(pattern, page_text)
                 if match:
                     potential_account = match.group(0)
                     logging.warning(f"Hittade ett *potentiellt* kontonummer med mönster '{pattern}': {potential_account}. Detta är en gissning.")
-                    # Överväg om detta ska returneras eller om det är för osäkert
-                    # return potential_account 
-            
+                    # return potential_account
             logging.error("Kunde inte extrahera kontonumret från dashboarden med någon metod.")
-            logging.debug(f"Dashboard HTML (start): {response.text[:1000]}...") # Logga mer för manuell analys
             return None
-                
-        except requests.exceptions.RequestException as e:
-            # Fel loggas redan i _make_request
+        except Exception as e:
             logging.error(f"Kunde inte hämta eller analysera dashboard: {e}")
             return None
 
