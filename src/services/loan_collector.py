@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Tuple
+from typing import Dict, List, Optional, Any
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -19,7 +19,6 @@ from urllib3.util.retry import Retry
 from ..models.loan import LoanCreate, LoanStatus
 from src.config import KameoConfig
 from src.auth import KameoAuthenticator
-from src.kameo_client import KameoClient
 
 logger = logging.getLogger(__name__)
 

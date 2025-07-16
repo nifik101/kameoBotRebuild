@@ -5,7 +5,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import Optional, Dict, Any
 
-from sqlalchemy import Column, Integer, String, DateTime, Numeric, Text, JSON, Boolean
+from sqlalchemy import Column, Integer, String, DateTime, Numeric, Text, JSON
 from sqlalchemy.sql import func
 from pydantic import BaseModel, Field, field_validator, ConfigDict
 

@@ -330,7 +330,7 @@ def analyze(ctx):
             click.echo(f"❌ Error: {results['message']}")
             return
         
-        click.echo(f"✅ Analysis complete!")
+        click.echo("✅ Analysis complete!")
         click.echo(f"   - Total loans analyzed: {results['total_loans']}")
         click.echo(f"   - Unique fields found: {len(results['all_fields'])}")
         
@@ -368,7 +368,7 @@ def stats(ctx):
             click.echo(f"❌ Error: {stats['message']}")
             return
         
-        click.echo(f"📊 Database Statistics:")
+        click.echo("📊 Database Statistics:")
         click.echo(f"   - Total loans: {stats.get('total_loans', 0)}")
         
         # Status breakdown

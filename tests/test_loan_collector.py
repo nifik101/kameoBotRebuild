@@ -9,7 +9,7 @@ import pytest
 import json
 from decimal import Decimal
 from datetime import datetime, timezone
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 # Import the modules to test

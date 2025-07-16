@@ -2,7 +2,6 @@ from dotenv import load_dotenv
 import requests
 from bs4 import BeautifulSoup, Tag
 import logging
-import time
 from typing import Optional
 import re # Importeras för get_account_number
 
