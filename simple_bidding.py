@@ -41,7 +41,7 @@ except ImportError as e:
     sys.exit(1)
 
 
-def main():
+def main() -> None:
     """Main function demonstrating bidding functionality."""
     print("🚀 Kameo Bidding Bot - Simple Demo")
     print("=" * 50)

@@ -1,111 +1,116 @@
-from dotenv import load_dotenv
+"""Kameo client for website interaction, login handling, and account number retrieval."""
+
+import logging
+import re
+from typing import Optional
+
 import requests
 from bs4 import BeautifulSoup, Tag
-import logging
-from typing import Optional
-import re # Importeras för get_account_number
+from dotenv import load_dotenv
 
-# Importera konfiguration och autentiserare från src-paketet
-from src.config import KameoConfig
+# Import configuration and authenticator from src package
 from src.auth import KameoAuthenticator
+from src.config import KameoConfig
 from pydantic import ValidationError
 
-# Ladda miljövariabler från .env-fil. 
-# Pydantic-settings laddar också, men detta säkerställer att de finns *innan* Pydantic-instansiering 
-# och att de skriver över existerande variabler om override=True.
+# Load environment variables from .env file.
+# Pydantic-settings also loads, but this ensures they exist *before* Pydantic instantiation
+# and that they override existing variables if override=True.
 load_dotenv(override=True)
 
-# Konfigurera loggning globalt
+# Configure logging globally
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s' # Lade till filnamn/radnummer
+    format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'  # Added filename/line number
 )
 
+logger = logging.getLogger(__name__)
+
+
 class KameoClient:
-    """Klient för att interagera med Kameos webbplats, hantera inloggning och hämta kontonummer."""
+    """Client for interacting with Kameo website, handling login and retrieving account number."""
     
-    def __init__(self, config: KameoConfig):
+    def __init__(self, config: KameoConfig) -> None:
         """
-        Initialiserar klienten med konfiguration och en session.
+        Initialize the client with configuration and a session.
 
         Args:
-            config: Ett KameoConfig-objekt med nödvändiga inställningar.
+            config: A KameoConfig object with necessary settings.
         """
         self.config = config
         self.session = requests.Session()
+        self.authenticator: Optional[KameoAuthenticator] = None
         if config.totp_secret:
-            self.authenticator: Optional[KameoAuthenticator] = KameoAuthenticator(config.totp_secret)
-        else:
-            self.authenticator: Optional[KameoAuthenticator] = None
+            self.authenticator = KameoAuthenticator(config.totp_secret)
         
-        # Sätt User-Agent och Accept-header för sessionen
+        # Set User-Agent and Accept headers for the session
         self.session.headers.update({
             'User-Agent': config.user_agent,
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
         })
         
-        # Sätt maximalt antal omdirigeringar för sessionen
+        # Set maximum number of redirects for the session
         self.session.max_redirects = config.max_redirects
-        logging.info(f"KameoClient initialiserad för {config.email} på {config.base_url}")
+        logger.info(f"KameoClient initialized for {config.email} on {config.base_url}")
 
     def _make_request(self, method: str, path: str, **kwargs) -> requests.Response:
         """
-        Intern hjälpmetod för att göra HTTP-requests med sessionen.
-        Hanterar URL-konstruktion, timeouts och grundläggande felhantering.
+        Internal helper method for making HTTP requests with the session.
+        Handles URL construction, timeouts and basic error handling.
 
         Args:
-            method: HTTP-metod (t.ex. 'GET', 'POST').
-            path: Relativ sökväg för requesten (t.ex. '/user/login').
-            **kwargs: Ytterligare argument att skicka till requests.Session.request.
+            method: HTTP method (e.g. 'GET', 'POST').
+            path: Relative path for the request (e.g. '/user/login').
+            **kwargs: Additional arguments to pass to requests.Session.request.
 
         Returns:
-            Ett requests.Response-objekt.
+            A requests.Response object.
 
         Raises:
-            requests.exceptions.RequestException: Om requesten misslyckas av någon anledning.
+            requests.exceptions.RequestException: If the request fails for any reason.
         """
         full_url = self.config.get_full_url(path)
         timeout = (self.config.connect_timeout, self.config.read_timeout)
         
-        logging.debug(f"Gör request: {method} {full_url}") # Använd debug-nivå för detaljerad info
+        logger.debug(f"Making request: {method} {full_url}")  # Use debug level for detailed info
         try:
             response = self.session.request(
                 method=method,
                 url=full_url,
                 timeout=timeout,
-                allow_redirects=True, # Standard för sessionen, men tydliggör
+                allow_redirects=True,  # Default for session, but clarify
                 **kwargs
             )
-            # Kasta exception för HTTP-fel (statuskod 4xx eller 5xx)
+            # Raise exception for HTTP errors (status code 4xx or 5xx)
             response.raise_for_status() 
-            logging.debug(f"Mottog svar: {response.status_code} från {response.url}")
+            logger.debug(f"Received response: {response.status_code} from {response.url}")
             return response
             
         except requests.exceptions.Timeout as e:
-            logging.error(f"Timeout vid request till {full_url}: {e}")
+            logger.error(f"Timeout on request to {full_url}: {e}")
             raise
         except requests.exceptions.RequestException as e:
-            logging.error(f"Request till {full_url} misslyckades: {e}")
-            # Logga eventuellt svar om det finns, kan ge mer info vid t.ex. 4xx/5xx fel
+            logger.error(f"Request to {full_url} failed: {e}")
+            # Log response if available, can provide more info for e.g. 4xx/5xx errors
             if e.response is not None:
-                 logging.error(f"Fel-respons status: {e.response.status_code}, innehåll: {e.response.text[:500]}...") # Logga början av svaret
+                logger.error(f"Error response status: {e.response.status_code}, content: {e.response.text[:500]}...")  # Log beginning of response
             raise
 
     def login(self) -> bool:
         """
-        Utför det initiala inloggningssteget med användarnamn och lösenord.
+        Perform the initial login step with username and password.
 
         Returns:
-            True om inloggningen lyckades (ledde till 2FA-sidan eller dashboard), annars False.
+            True if login succeeded (led to 2FA page or dashboard), otherwise False.
         """
         login_path = '/user/login'
-        logging.info(f"Påbörjar inloggning för {self.config.email}...")
+        logger.info(f"Starting login for {self.config.email}...")
         try:
-            # Steg 1: Hämta inloggningssidan för att få cookies och eventuell CSRF-token
-            # Använd _make_request som hanterar grundläggande fel
+            # Step 1: Get login page to get cookies and any CSRF token
+            # Use _make_request which handles basic errors
             login_get_response = self._make_request('GET', login_path)
             
-            # Försök extrahera CSRF-token (även om den inte verkar användas i detta flöde, bra att ha kvar)
+            # Try to extract CSRF token (even if it doesn't seem to be used in this flow, good to keep)
             soup = BeautifulSoup(login_get_response.text, 'html.parser')
             csrf_token: Optional[str] = None
             csrf_meta = soup.find('meta', {'name': 'csrf-token'})
@@ -113,307 +118,315 @@ class KameoClient:
                 token_value = csrf_meta.get('content')
                 if isinstance(token_value, str):
                     csrf_token = token_value
-                    logging.info(f"Hittade CSRF-token: {csrf_token[:5]}...") # Logga bara början
+                    logger.info(f"Found CSRF token: {csrf_token[:5]}...")  # Log only beginning
                 
-            # Steg 2: Skicka inloggningsuppgifter
+            # Step 2: Send login credentials
             payload = {
                 'Login': self.config.email,
                 'Password': self.config.password,
-                'LoginButton': '', # Namnet på submit-knappen
-                'RedirectURI': ''  # Verkar inte användas men skickas med
+                'LoginButton': '',  # Name of submit button
+                'RedirectURI': ''   # Doesn't seem to be used but sent along
             }
             
             headers = {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'Referer': self.config.get_full_url(login_path),
-                'Origin': self.config.base_url # Viktig header enligt Postman-analys
+                'Origin': self.config.base_url  # Important header according to Postman analysis
             }
             
-            # Lägg till CSRF-token i header om den hittades (för framtida bruk?)
+            # Add CSRF token to header if found (for future use?)
             if csrf_token:
                 headers['X-CSRF-Token'] = csrf_token
             
-            logging.info("Skickar inloggningsuppgifter...")
-            # Använd session.request direkt här då _make_request alltid följer redirects,
-            # men vi behöver analysera det *omedelbara* svaret efter POST.
-            # Vi behöver dock fortfarande timeouts.
+            logger.info("Sending login credentials...")
+            # Use session.request directly here since _make_request always follows redirects,
+            # but we need to analyze the *immediate* response after POST.
+            # We still need timeouts though.
             response = self.session.request(
                 method='POST',
                 url=self.config.get_full_url(login_path),
                 data=payload,
                 headers=headers,
                 timeout=(self.config.connect_timeout, self.config.read_timeout),
-                allow_redirects=True # Följ redirects som normalt efter POST
+                allow_redirects=True  # Follow redirects as normal after POST
             )
-            response.raise_for_status() # Kontrollera för HTTP-fel
+            response.raise_for_status()  # Check for HTTP errors
             
-            logging.info(f"Svar efter inloggnings-POST: Status={response.status_code}, URL={response.url}")
+            logger.info(f"Response after login POST: Status={response.status_code}, URL={response.url}")
             
-            # Kontrollera om vi hamnade på 2FA-sidan eller direkt på dashboard
+            # Check if we ended up on 2FA page or directly on dashboard
             if '/auth/2fa' in response.url:
-                logging.info("Inloggning lyckades, omdirigerad till 2FA-sidan.")
+                logger.info("Login succeeded, redirected to 2FA page.")
                 return True
             elif '/investor/dashboard' in response.url:
-                logging.info("Inloggning lyckades, omdirigerad direkt till dashboard (2FA kanske ej aktiv?).")
+                logger.info("Login succeeded, redirected directly to dashboard (2FA maybe not active?).")
                 return True
             else:
-                # Oväntat resultat, logga och misslyckas
-                logging.error(f"Oväntad URL efter inloggning: {response.url}")
-                logging.error(f"Response text (start): {response.text[:500]}...")
+                # Unexpected result, log and fail
+                logger.error(f"Unexpected URL after login: {response.url}")
+                logger.error(f"Response text (start): {response.text[:500]}...")
                 return False
             
         except requests.exceptions.RequestException as e:
-            # Fel loggas redan i _make_request eller i POST-anropet ovan
-            logging.error(f"Inloggningsprocessen misslyckades: {e}")
+            # Errors are already logged in _make_request or in POST call above
+            logger.error(f"Login process failed: {e}")
             return False
 
     def handle_2fa(self) -> bool:
         """
-        Hanterar 2FA-autentisering med TOTP-kod enligt det fungerande Postman-flödet.
-        Hämtar 2FA-sidan, extraherar token, och skickar koden.
+        Handle 2FA authentication with TOTP code according to the working Postman flow.
+        Gets 2FA page, extracts token, and sends the code.
 
         Returns:
-            True om 2FA-autentiseringen lyckades, annars False.
+            True if 2FA authentication succeeded, otherwise False.
         """
         auth_path = '/auth/2fa'
-        logging.info("Påbörjar 2FA-hantering...")
+        logger.info("Starting 2FA handling...")
         try:
-            # Steg 1: Hämta 2FA-sidan för att få en färsk ezxform_token
-            logging.info(f"Hämtar {auth_path} för att få 2FA-formulär/token...")
+            # Step 1: Get 2FA page to get a fresh ezxform_token
+            logger.info(f"Getting {auth_path} to get 2FA form/token...")
             get_response = self._make_request('GET', auth_path)
 
-            # Steg 2: Extrahera ezxform_token från formuläret
+            # Step 2: Extract ezxform_token from the form
             soup = BeautifulSoup(get_response.text, 'html.parser')
             form = soup.find('form', {'action': auth_path})
             if not isinstance(form, Tag):
-                logging.error(f"Kunde inte hitta 2FA-formulär med action='{auth_path}' på sidan {get_response.url}")
-                logging.debug(f"Sidans innehåll (start): {get_response.text[:500]}...")
+                logger.error(f"Could not find 2FA form with action='{auth_path}' on page {get_response.url}")
+                logger.debug(f"Page content (start): {get_response.text[:500]}...")
                 return False
 
             token_input = form.find('input', {'name': 'ezxform_token'})
             ezxform_token: Optional[str] = None
             if isinstance(token_input, Tag) and token_input.has_attr('value'):
-                 token_value = token_input.get('value')
-                 if isinstance(token_value, str) and token_value:
-                      ezxform_token = token_value
-                      logging.info(f"Hittade ezxform_token: {ezxform_token}")
-                 else:
-                     logging.warning("Hittade ezxform_token-input men värdet saknas eller är inte en sträng.")
+                token_value = token_input.get('value')
+                if isinstance(token_value, str) and token_value:
+                    ezxform_token = token_value
+                    logger.info(f"Found ezxform_token: {ezxform_token}")
+                else:
+                    logger.warning("Found ezxform_token input but value is missing or not a string.")
             
             if not ezxform_token:
-                 logging.error("Kunde inte extrahera ett giltigt 'ezxform_token' från 2FA-formuläret.")
-                 return False
-
-            # Steg 3: Generera standard TOTP-kod
-            code = self.authenticator.get_2fa_code()
-            if not code:
-                logging.error("Kunde inte generera 2FA-kod. Kontrollera TOTP-hemligheten i konfigurationen.")
+                logger.error("Could not extract a valid 'ezxform_token' from the 2FA form.")
                 return False
 
-            # Steg 4: Skicka 2FA-koden och token
+            # Step 3: Generate standard TOTP code
+            if not self.authenticator:
+                logger.error("No authenticator available. Check TOTP secret in configuration.")
+                return False
+            code = self.authenticator.get_2fa_code()
+            if not code:
+                logger.error("Could not generate 2FA code. Check TOTP secret in configuration.")
+                return False
+
+            # Step 4: Send 2FA code and token
             payload = {
                 'ezxform_token': ezxform_token,
                 'code': code,
-                'submit_code': '' # Namnet på submit-knappen ("Fortsätt")
+                'submit_code': ''  # Name of submit button ("Continue")
             }
             
-            logging.info(f"Skickar 2FA-kod ({code})...")
+            logger.info(f"Sending 2FA code ({code})...")
             response = self._make_request(
                 method='POST',
                 path=auth_path,
                 data=payload,
                 headers={
                     'Content-Type': 'application/x-www-form-urlencoded',
-                    'Referer': get_response.url, # Referer från GET-requesten
-                    'Origin': self.config.base_url # Viktig header
+                    'Referer': get_response.url,  # Referer from GET request
+                    'Origin': self.config.base_url  # Important header
                 }
             )
             
-            logging.info(f"Svar efter 2FA-POST: Status={response.status_code}, URL={response.url}")
+            logger.info(f"Response after 2FA POST: Status={response.status_code}, URL={response.url}")
 
-            # Steg 5: Kontrollera om autentiseringen lyckades (om vi inte är kvar på 2FA-sidan)
+            # Step 5: Check if authentication succeeded (if we're not still on 2FA page)
             if auth_path not in response.url:
-                logging.info(f"2FA-autentisering lyckades med kod {code}.")
+                logger.info(f"2FA authentication succeeded with code {code}.")
                 return True
             else:
-                logging.error(f"2FA-autentisering misslyckades med kod {code}. Fortfarande på URL: {response.url}")
-                # Försök hitta och logga felmeddelande från sidan
+                logger.error(f"2FA authentication failed with code {code}. Still on URL: {response.url}")
+                # Try to find and log error message from page
                 error_soup = BeautifulSoup(response.text, 'html.parser')
-                # Leta efter vanliga felmeddelande-divar
+                # Look for common error message divs
                 alert_danger = error_soup.find('div', class_='alert-danger') 
                 if alert_danger and isinstance(alert_danger, Tag):
                     error_text = alert_danger.text.strip()
-                    logging.error(f"Felmeddelande hittat på sidan: {error_text}")
+                    logger.error(f"Error message found on page: {error_text}")
                 else:
-                     logging.warning("Inget specifikt felmeddelande (alert-danger) hittades på 2FA-sidan efter misslyckat försök.")
-                     logging.debug(f"Sidans innehåll (start): {response.text[:500]}...") # Logga början för manuell inspektion
+                    logger.warning("No specific error message (alert-danger) found on 2FA page after failed attempt.")
+                    logger.debug(f"Page content (start): {response.text[:500]}...")  # Log beginning for manual inspection
                 return False
 
         except requests.exceptions.RequestException as e:
-            logging.error(f"2FA-hantering misslyckades: {e}")
+            logger.error(f"2FA handling failed: {e}")
             return False
 
     def get_account_number(self) -> Optional[str]:
         """
-        Hämtar användarens kontonummer genom att först försöka API-anropet,
-        och falla tillbaka på HTML-parsning om det misslyckas.
+        Get the user's account number by first trying the API call,
+        and falling back to HTML parsing if it fails.
 
         Returns:
-            Kontonumret som en sträng om det hittas, annars None.
+            Account number as a string if found, otherwise None.
         """
-        # Försök först med API-anropet
+        # Try first with API call
         api_account_number = self.get_account_number_from_api()
         if api_account_number:
             return api_account_number
         
-        # Om API misslyckas, falla tillbaka på HTML-parsning
-        logging.warning("API-anropet för kontonummer misslyckades, försöker HTML-parsning...")
+        # If API fails, fall back to HTML parsing
+        logger.warning("API call for account number failed, trying HTML parsing...")
         return self.get_account_number_from_html()
 
     def get_account_number_from_api(self) -> Optional[str]:
         """
-        Hämtar kontonummer via Kameos JSON-API (primär metod).
+        Get account number via Kameo's JSON API (primary method).
 
         Returns:
-            Kontonumret som en sträng om det hittas, annars None.
+            Account number as a string if found, otherwise None.
         """
         api_path = '/ezjscore/call/kameo_transfer::init'
-        logging.info("Försöker hämta kontonummer via API...")
+        logger.info("Trying to get account number via API...")
         try:
             response = self._make_request('GET', api_path)
             
-            # Försök tolka JSON-svaret
+            # Try to parse JSON response
             try:
                 data = response.json()
-                logging.debug(f"API-svar: {data}")
+                logger.debug(f"API response: {data}")
                 
-                # Navigera genom JSON-strukturen för att hitta kontonumret
-                # Baserat på observerad struktur: content -> account_number
+                # Navigate through JSON structure to find account number
+                # Based on observed structure: content -> account_number
                 if isinstance(data, dict) and 'content' in data:
                     content = data['content']
                     if isinstance(content, dict) and 'account_number' in content:
                         account_number = content['account_number']
                         if isinstance(account_number, str) and account_number.strip():
-                            logging.info(f"Kontonummer hämtat via API: {account_number}")
+                            logger.info(f"Account number retrieved via API: {account_number}")
                             return account_number.strip()
                 
-                # Om strukturen inte matchar förväntan
-                logging.warning("API-svaret har inte förväntad struktur för kontonummer")
-                logging.debug(f"Fullständigt API-svar: {data}")
+                # If structure doesn't match expectation
+                logger.warning("API response doesn't have expected structure for account number")
+                logger.debug(f"Complete API response: {data}")
                 return None
                 
             except ValueError as e:
-                logging.error(f"Kunde inte tolka API-svar som JSON: {e}")
-                logging.debug(f"Raw API-svar: {response.text[:500]}...")
+                logger.error(f"Could not parse API response as JSON: {e}")
+                logger.debug(f"Raw API response: {response.text[:500]}...")
                 return None
                 
         except requests.exceptions.RequestException as e:
-            logging.error(f"API-anrop för kontonummer misslyckades: {e}")
+            logger.error(f"API call for account number failed: {e}")
             return None
 
     def get_account_number_from_html(self) -> Optional[str]:
         """
-        Hämtar kontonummer genom att parsa HTML från dashboard (fallback-metod).
+        Get account number by parsing HTML from dashboard (fallback method).
 
         Returns:
-            Kontonumret som en sträng om det hittas, annars None.
+            Account number as a string if found, otherwise None.
         """
         dashboard_path = '/investor/dashboard'
-        logging.info("Försöker hämta kontonummer via HTML-parsning...")
+        logger.info("Trying to get account number via HTML parsing...")
         try:
             response = self._make_request('GET', dashboard_path)
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # Försök hitta kontonumret med CSS-selektor
+            # Try to find account number with CSS selector
             account_div = soup.select_one('.account-number')
             if account_div and isinstance(account_div, Tag):
                 account_text = account_div.text.strip()
                 if account_text:
-                    logging.info(f"Kontonummer hämtat via HTML: {account_text}")
+                    logger.info(f"Account number retrieved via HTML: {account_text}")
                     return account_text
             
-            # Om CSS-selektor inte fungerar, försök med regex
-            logging.warning("CSS-selektor för kontonummer misslyckades, försöker regex...")
+            # If CSS selector doesn't work, try with regex
+            logger.warning("CSS selector for account number failed, trying regex...")
             account_match = re.search(r'kontonummer[:\s]*(\d+)', response.text, re.IGNORECASE)
             if account_match:
                 account_number = account_match.group(1)
-                logging.info(f"Kontonummer hämtat via regex: {account_number}")
+                logger.info(f"Account number retrieved via regex: {account_number}")
                 return account_number
             
-            logging.error("Kunde inte hitta kontonummer på dashboard-sidan")
-            # Spara HTML för manuell inspektion (kommenterat för att undvika stora loggar)
+            logger.error("Could not find account number on dashboard page")
+            # Save HTML for manual inspection (commented to avoid large logs)
             # with open('dashboard_debug.html', 'w', encoding='utf-8') as f:
             #     f.write(response.text)
-            # logging.info("Dashboard HTML sparad som 'dashboard_debug.html' för manuell inspektion")
+            # logger.info("Dashboard HTML saved as 'dashboard_debug.html' for manual inspection")
             return None
             
         except requests.exceptions.RequestException as e:
-            logging.error(f"Kunde inte hämta dashboard för kontonummer: {e}")
-            return False
+            logger.error(f"Could not get dashboard for account number: {e}")
+            return None
+
 
 def load_configuration() -> Optional[KameoConfig]:
     """
-    Laddar konfiguration från miljövariabler med felhantering.
+    Load configuration from environment variables with error handling.
 
     Returns:
-        Ett KameoConfig-objekt om konfigurationen är giltig, annars None.
+        A KameoConfig object if configuration is valid, otherwise None.
     """
     try:
+        # KameoConfig requires email and password from environment variables
+        # These should be set in .env file or environment
         config = KameoConfig()
-        logging.info("Konfiguration laddad framgångsrikt.")
+        logger.info("Configuration loaded successfully.")
         return config
     except ValidationError as e:
-        logging.error(f"Konfigurationsfel: {e}")
-        # Visa specifika fel för varje fält
+        logger.error(f"Configuration error: {e}")
+        # Show specific errors for each field
         for error in e.errors():
             field = " -> ".join(str(loc) for loc in error['loc'])
             message = error['msg']
-            logging.error(f"  {field}: {message}")
+            logger.error(f"  {field}: {message}")
         return None
     except Exception as e:
-        logging.error(f"Oväntat fel vid konfigurationsladdning: {e}")
+        logger.error(f"Unexpected error during configuration loading: {e}")
         return None
 
-def main():
-    """Huvudfunktion för att demonstrera användningen av KameoClient."""
-    logging.info("Startar Kameo-klient...")
+
+def main() -> None:
+    """Main function to demonstrate KameoClient usage."""
+    logger.info("Starting Kameo client...")
     
-    # Ladda konfiguration
+    # Load configuration
     config = load_configuration()
     if not config:
-        logging.error("Kunde inte ladda konfiguration. Avbryter.")
+        logger.error("Could not load configuration. Aborting.")
         return
 
-    # Skapa klient och försök logga in
+    # Create client and try to log in
     client = KameoClient(config)
     
     try:
-        # Steg 1: Logga in
+        # Step 1: Log in
         if not client.login():
-            logging.error("Inloggning misslyckades. Avbryter.")
+            logger.error("Login failed. Aborting.")
             return
 
-        # Steg 2: Hantera 2FA (om nödvändigt)
-        # Kontrollera om vi är på 2FA-sidan
+        # Step 2: Handle 2FA (if necessary)
+        # Check if we're on 2FA page
         current_response = client._make_request('GET', '/investor/dashboard')
         if '/user/login' in current_response.url or '/auth/2fa' in current_response.url:
-            logging.info("2FA krävs...")
+            logger.info("2FA required...")
             if not client.handle_2fa():
-                logging.error("2FA-autentisering misslyckades. Avbryter.")
+                logger.error("2FA authentication failed. Aborting.")
                 return
 
-        # Steg 3: Hämta kontonummer
+        # Step 3: Get account number
         account_number = client.get_account_number()
         if account_number:
-            print(f"Kontonummer: {account_number}")
-            logging.info(f"Framgångsrikt hämtat kontonummer: {account_number}")
+            print(f"Account number: {account_number}")
+            logger.info(f"Successfully retrieved account number: {account_number}")
         else:
-            logging.error("Kunde inte hämta kontonummer.")
+            logger.error("Could not retrieve account number.")
 
     except Exception as e:
-        logging.error(f"Ett oväntat fel inträffade: {e}")
+        logger.error(f"An unexpected error occurred: {e}")
     
-    logging.info("Kameo-klient avslutad.")
+    logger.info("Kameo client finished.")
+
 
 if __name__ == "__main__":
     main() 

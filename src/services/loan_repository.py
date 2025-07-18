@@ -8,14 +8,14 @@ and duplicate detection.
 
 import logging
 from datetime import datetime, timedelta
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, or_, desc, func
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, desc, func, or_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import Session
 
-from ..models.loan import Loan, LoanCreate, LoanResponse, LoanStatus
 from ..database.connection import db_session_scope
+from ..models.loan import Loan, LoanCreate, LoanResponse, LoanStatus
 
 logger = logging.getLogger(__name__)
 
@@ -199,17 +199,18 @@ class LoanRepository:
         Search loans by title or description.
         
         Args:
-            search_term: Term to search for
+            search_term: Search term to look for
             
         Returns:
-            List of LoanResponse objects
+            List of LoanResponse objects matching the search
         """
         try:
             with db_session_scope() as session:
+                search_pattern = f"%{search_term}%"
                 loans = session.query(Loan).filter(
                     or_(
-                        Loan.title.ilike(f'%{search_term}%'),
-                        Loan.description.ilike(f'%{search_term}%')
+                        Loan.title.ilike(search_pattern),
+                        Loan.description.ilike(search_pattern)
                     )
                 ).order_by(desc(Loan.created_at)).all()
                 
@@ -221,72 +222,69 @@ class LoanRepository:
     
     def get_loan_statistics(self) -> Dict[str, Any]:
         """
-        Get statistics about loans in the database.
+        Get comprehensive statistics about loans in the database.
         
         Returns:
-            Dictionary with various statistics
+            Dictionary with various loan statistics
         """
         try:
             with db_session_scope() as session:
-                stats = {}
-                
-                # Total loans
-                stats['total_loans'] = session.query(Loan).count()
-                
-                # Loans by status
-                status_counts = session.query(
-                    Loan.status, func.count(Loan.id)
-                ).group_by(Loan.status).all()
-                
-                stats['by_status'] = {status: count for status, count in status_counts}
+                # Basic counts
+                total_loans = session.query(func.count(Loan.id)).scalar()
+                open_loans = session.query(func.count(Loan.id)).filter(
+                    Loan.status == LoanStatus.OPEN.value
+                ).scalar()
+                closed_loans = session.query(func.count(Loan.id)).filter(
+                    Loan.status == LoanStatus.CLOSED.value
+                ).scalar()
+                funded_loans = session.query(func.count(Loan.id)).filter(
+                    Loan.status == LoanStatus.FUNDED.value
+                ).scalar()
                 
                 # Amount statistics
-                amount_stats = session.query(
-                    func.min(Loan.amount),
-                    func.max(Loan.amount),
-                    func.avg(Loan.amount),
-                    func.sum(Loan.amount)
-                ).first()
+                total_amount = session.query(func.sum(Loan.amount)).scalar() or 0
+                avg_amount = session.query(func.avg(Loan.amount)).scalar() or 0
+                min_amount = session.query(func.min(Loan.amount)).scalar() or 0
+                max_amount = session.query(func.max(Loan.amount)).scalar() or 0
                 
-                if amount_stats[0] is not None:
-                    stats['amount_stats'] = {
-                        'min_amount': float(amount_stats[0]),
-                        'max_amount': float(amount_stats[1]),
-                        'avg_amount': float(amount_stats[2]),
-                        'total_amount': float(amount_stats[3])
-                    }
+                # Date statistics
+                oldest_loan = session.query(Loan).order_by(Loan.created_at).first()
+                newest_loan = session.query(Loan).order_by(desc(Loan.created_at)).first()
                 
-                # Recent activity
-                recent_loans = session.query(Loan).order_by(
-                    desc(Loan.created_at)
-                ).limit(5).all()
+                # Interest rate statistics
+                avg_interest_rate = session.query(func.avg(Loan.interest_rate)).scalar() or 0
                 
-                stats['recent_loans'] = [
-                    {
-                        'loan_id': loan.loan_id,
-                        'title': loan.title,
-                        'amount': float(loan.amount),
-                        'status': loan.status,
-                        'created_at': loan.created_at.isoformat()
-                    }
-                    for loan in recent_loans
-                ]
+                stats = {
+                    'total_loans': total_loans,
+                    'open_loans': open_loans,
+                    'closed_loans': closed_loans,
+                    'funded_loans': funded_loans,
+                    'total_amount': float(total_amount),
+                    'average_amount': float(avg_amount),
+                    'min_amount': float(min_amount),
+                    'max_amount': float(max_amount),
+                    'average_interest_rate': float(avg_interest_rate),
+                    'oldest_loan_date': oldest_loan.created_at if oldest_loan else None,
+                    'newest_loan_date': newest_loan.created_at if newest_loan else None,
+                    'last_updated': datetime.now().isoformat()
+                }
                 
+                logger.info(f"Retrieved statistics: {total_loans} total loans")
                 return stats
                 
         except Exception as e:
-            logger.error(f"Failed to get loan statistics: {e}")
-            return {}
+            logger.error(f"Failed to retrieve loan statistics: {e}")
+            return {'error': str(e)}
     
     def delete_loan(self, loan_id: str) -> bool:
         """
         Delete a loan from the database.
         
         Args:
-            loan_id: The loan ID to delete
+            loan_id: ID of the loan to delete
             
         Returns:
-            True if successful, False otherwise
+            True if deletion was successful, False otherwise
         """
         try:
             with db_session_scope() as session:
@@ -308,13 +306,13 @@ class LoanRepository:
     
     def cleanup_old_loans(self, days_old: int = 30) -> int:
         """
-        Clean up old loans from the database.
+        Remove loans older than specified number of days.
         
         Args:
-            days_old: Number of days to keep loans (older will be deleted)
+            days_old: Minimum age in days for loans to be removed
             
         Returns:
-            Number of loans deleted
+            Number of loans removed
         """
         try:
             cutoff_date = datetime.now() - timedelta(days=days_old)
@@ -325,11 +323,10 @@ class LoanRepository:
                 ).all()
                 
                 count = len(old_loans)
-                
                 for loan in old_loans:
                     session.delete(loan)
                 
-                logger.info(f"Cleaned up {count} old loans")
+                logger.info(f"Cleaned up {count} loans older than {days_old} days")
                 return count
                 
         except Exception as e:
@@ -337,15 +334,22 @@ class LoanRepository:
             return 0
     
     def _create_new_loan(self, session: Session, loan_data: LoanCreate) -> LoanResponse:
-        """Create a new loan in the database."""
-        try:
-            # Handle status - could be enum or string
-            status_value = loan_data.status.value if hasattr(loan_data.status, 'value') else str(loan_data.status)
+        """
+        Create a new loan in the database.
+        
+        Args:
+            session: Database session
+            loan_data: Loan data to create
             
+        Returns:
+            LoanResponse object for the created loan
+        """
+        try:
+            # Convert LoanCreate to Loan model
             loan = Loan(
                 loan_id=loan_data.loan_id,
                 title=loan_data.title,
-                status=status_value,
+                status=loan_data.status.value,
                 amount=loan_data.amount,
                 interest_rate=loan_data.interest_rate,
                 open_date=loan_data.open_date,
@@ -362,13 +366,17 @@ class LoanRepository:
             )
             
             session.add(loan)
-            session.flush()  # To get the ID
+            session.flush()  # Get the ID
             
-            logger.debug(f"Created new loan: {loan.loan_id}")
+            logger.info(f"Created new loan {loan_data.loan_id}")
             return LoanResponse.from_orm(loan)
             
         except IntegrityError as e:
             logger.error(f"Integrity error creating loan {loan_data.loan_id}: {e}")
+            session.rollback()
+            raise
+        except Exception as e:
+            logger.error(f"Error creating loan {loan_data.loan_id}: {e}")
             session.rollback()
             raise
     
@@ -378,12 +386,21 @@ class LoanRepository:
         existing_loan: Loan, 
         loan_data: LoanCreate
     ) -> LoanResponse:
-        """Update an existing loan in the database."""
+        """
+        Update an existing loan in the database.
+        
+        Args:
+            session: Database session
+            existing_loan: Existing loan object
+            loan_data: New loan data
+            
+        Returns:
+            LoanResponse object for the updated loan
+        """
         try:
             # Update fields
             existing_loan.title = loan_data.title
-            # Handle status - could be enum or string
-            existing_loan.status = loan_data.status.value if hasattr(loan_data.status, 'value') else str(loan_data.status)
+            existing_loan.status = loan_data.status.value
             existing_loan.amount = loan_data.amount
             existing_loan.interest_rate = loan_data.interest_rate
             existing_loan.open_date = loan_data.open_date
@@ -399,9 +416,7 @@ class LoanRepository:
             existing_loan.duration_months = loan_data.duration_months
             existing_loan.updated_at = datetime.now()
             
-            session.flush()
-            
-            logger.debug(f"Updated existing loan: {existing_loan.loan_id}")
+            logger.info(f"Updated existing loan {loan_data.loan_id}")
             return LoanResponse.from_orm(existing_loan)
             
         except Exception as e:

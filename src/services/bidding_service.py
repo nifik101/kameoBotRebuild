@@ -13,8 +13,8 @@ Based on HAR analysis of actual bidding operations.
 
 import json
 import logging
-from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -50,7 +50,7 @@ class BiddingService:
     and handles the complete bidding workflow including sequence hashes.
     """
     
-    def __init__(self, config: KameoConfig):
+    def __init__(self, config: KameoConfig) -> None:
         """
         Initialize the bidding service.
         
@@ -63,7 +63,7 @@ class BiddingService:
         
         logger.info("BiddingService initialized successfully")
     
-    def _setup_session(self):
+    def _setup_session(self) -> None:
         """Setup the session with proper headers and authentication."""
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36',
@@ -202,21 +202,6 @@ class BiddingService:
                 rate_limit_remaining=int(rate_limit_remaining) if rate_limit_remaining else None
             )
             
-        except requests.exceptions.HTTPError as e:
-            if response.status_code == 429:  # Rate limit exceeded
-                logger.error(f"Rate limit exceeded for loan {request.loan_id}")
-                return BiddingResponse(
-                    success=False,
-                    error_message="Rate limit exceeded",
-                    rate_limit_remaining=0
-                )
-            else:
-                logger.error(f"HTTP error placing bid on loan {request.loan_id}: {e}")
-                return BiddingResponse(
-                    success=False,
-                    error_message=f"HTTP error: {e}"
-                )
-                
         except requests.exceptions.RequestException as e:
             logger.error(f"Error placing bid on loan {request.loan_id}: {e}")
             return BiddingResponse(
@@ -226,22 +211,22 @@ class BiddingService:
     
     def get_available_loans(self, max_pages: int = 5) -> List[Dict[str, Any]]:
         """
-        Get all available loans across multiple pages.
+        Get all available loans for bidding.
         
         Args:
             max_pages: Maximum number of pages to fetch
             
         Returns:
-            List of all available loans
+            List of loan dictionaries
         """
         all_loans = []
         
         for page in range(1, max_pages + 1):
-            loans_data = self.get_loan_listings(page=page)
-            if not loans_data:
+            data = self.get_loan_listings(page=page)
+            if not data:
                 break
                 
-            loans = loans_data.get('data', {}).get('loans', [])
+            loans = data.get('data', {}).get('loans', [])
             if not loans:
                 break
                 
@@ -253,80 +238,103 @@ class BiddingService:
     
     def analyze_loan_for_bidding(self, loan_id: int) -> Optional[Dict[str, Any]]:
         """
-        Analyze a loan for bidding potential.
+        Analyze a specific loan for bidding potential.
         
         Args:
             loan_id: ID of the loan to analyze
             
         Returns:
-            Complete loan analysis or None on error
+            Analysis results or None on error
         """
-        # Get loan details from listings
-        loans = self.get_available_loans(max_pages=1)
-        loan_details = next((loan for loan in loans if loan.get('id') == loan_id), None)
-        
-        if not loan_details:
-            logger.warning(f"Loan {loan_id} not found in available loans")
+        try:
+            # Get loan details
+            loan_details = self.get_loan_listings(limit=100)
+            if not loan_details:
+                return None
+            
+            # Find the specific loan
+            loans = loan_details.get('data', {}).get('loans', [])
+            target_loan = None
+            for loan in loans:
+                if loan.get('id') == loan_id:
+                    target_loan = loan
+                    break
+            
+            if not target_loan:
+                logger.error(f"Loan {loan_id} not found in available loans")
+                return None
+            
+            # Load bidding data
+            bidding_data = self.load_bidding_data(loan_id)
+            
+            # Perform analysis
+            analysis = self._analyze_bidding_potential(target_loan, bidding_data)
+            
+            return {
+                'loan_details': target_loan,
+                'bidding_data': bidding_data,
+                'analysis': analysis
+            }
+            
+        except Exception as e:
+            logger.error(f"Error analyzing loan {loan_id}: {e}")
             return None
-        
-        # Get bidding data
-        bidding_data = self.load_bidding_data(loan_id)
-        
-        return {
-            "loan_id": loan_id,
-            "loan_details": loan_details,
-            "bidding_data": bidding_data,
-            "analysis": self._analyze_bidding_potential(loan_details, bidding_data)
-        }
     
-    def _analyze_bidding_potential(self, loan_details: Dict[str, Any], 
-                                 bidding_data: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    def _analyze_bidding_potential(
+        self, 
+        loan_details: Dict[str, Any], 
+        bidding_data: Optional[Dict[str, Any]]
+    ) -> Dict[str, Any]:
         """
-        Analyze the bidding potential of a loan.
+        Analyze bidding potential for a loan.
         
         Args:
-            loan_details: Loan details from listing
-            bidding_data: Bidding data from API
+            loan_details: Loan information
+            bidding_data: Bidding-specific data
             
         Returns:
             Analysis results
         """
         analysis: Dict[str, Any] = {
-            "recommended_bid_amount": None,
-            "risk_level": "unknown",
-            "bidding_viable": False,
-            "notes": []
+            'bidding_viable': False,
+            'risk_level': 'unknown',
+            'recommended_bid_amount': None,
+            'notes': []
         }
         
-        if not bidding_data:
-            analysis["notes"].append("No bidding data available")
-            return analysis
-        
-        # Extract key metrics
         try:
-            current_amount = bidding_data.get('current_amount', 0)
-            target_amount = bidding_data.get('target_amount', 0)
-            min_bid = bidding_data.get('min_bid_amount', 0)
-            max_bid = bidding_data.get('max_bid_amount', 0)
+            # Basic loan analysis
+            amount = loan_details.get('amount', 0)
+            interest_rate = loan_details.get('interest_rate', 0)
+            status = loan_details.get('status', 'unknown')
             
-            # Calculate bidding potential
-            if target_amount > current_amount and min_bid > 0:
-                analysis["bidding_viable"] = True
-                analysis["recommended_bid_amount"] = min_bid
-                
-                # Risk assessment
-                if current_amount / target_amount > 0.8:
-                    analysis["risk_level"] = "high"
-                    analysis["notes"].append("Loan nearly funded - high competition")
-                elif current_amount / target_amount > 0.5:
-                    analysis["risk_level"] = "medium"
-                    analysis["notes"].append("Moderate funding progress")
-                else:
-                    analysis["risk_level"] = "low"
-                    analysis["notes"].append("Early stage loan - lower competition")
+            # Determine if bidding is viable
+            if status.lower() in ['open', 'active'] and amount > 0:
+                analysis['bidding_viable'] = True
+            
+            # Risk assessment
+            if interest_rate >= 8.0:
+                analysis['risk_level'] = 'high'
+            elif interest_rate >= 6.0:
+                analysis['risk_level'] = 'medium'
+            elif interest_rate > 0:
+                analysis['risk_level'] = 'low'
+            
+            # Recommended bid amount (simple logic)
+            if analysis['bidding_viable']:
+                # Recommend 10% of loan amount, minimum 1000 SEK
+                recommended = max(1000, int(amount * 0.1))
+                analysis['recommended_bid_amount'] = recommended
+            
+            # Add notes
+            if interest_rate > 0:
+                analysis['notes'].append(f"Interest rate: {interest_rate}%")
+            if amount > 0:
+                analysis['notes'].append(f"Loan amount: {amount:,} SEK")
             
         except Exception as e:
-            analysis["notes"].append(f"Error analyzing bidding data: {e}")
+            logger.error(f"Error in bidding analysis: {e}")
+            analysis['notes'].append(f"Analysis error: {e}")
         
         return analysis
     
@@ -336,26 +344,32 @@ class BiddingService:
         
         Args:
             loan_id: ID of the loan
-            strategy: Bidding strategy configuration
+            strategy: Bidding strategy parameters
             
         Returns:
             BiddingResponse with results
         """
-        # Load initial bidding data
-        bidding_data = self.load_bidding_data(loan_id)
-        if not bidding_data:
+        try:
+            amount = strategy.get('amount', 0)
+            payment_option = strategy.get('payment_option', 'ip')
+            
+            if amount <= 0:
+                return BiddingResponse(
+                    success=False,
+                    error_message="Invalid bid amount"
+                )
+            
+            request = BiddingRequest(
+                loan_id=loan_id,
+                amount=amount,
+                payment_option=payment_option
+            )
+            
+            return self.place_bid(request)
+            
+        except Exception as e:
+            logger.error(f"Error executing bidding strategy: {e}")
             return BiddingResponse(
                 success=False,
-                error_message="Could not load bidding data"
-            )
-        
-        # Create bidding request
-        request = BiddingRequest(
-            loan_id=loan_id,
-            amount=strategy.get('amount', 1000),
-            payment_option=strategy.get('payment_option', 'ip'),
-            sequence_hash=bidding_data.get('sequence_hash', '')
-        )
-        
-        # Place the bid
-        return self.place_bid(request) 
+                error_message=str(e)
+            ) 

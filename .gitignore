@@ -3,10 +3,24 @@
 # Project specific
 /logs/
 /loans.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache directories
+__pycache__/
+.ruff_cache/
+.mypy_cache/
+.pytest_cache/
+
+# Environment files
+.env
+.env.test
+.env.local
+.env.production
 
 
 # Byte-compiled / optimized / DLL files
-__pycache__/
 *.py[cod]
 *$py.class
 
@@ -55,7 +69,6 @@ coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
-.pytest_cache/
 cover/
 
 # Translations
@@ -135,7 +148,6 @@ celerybeat.pid
 *.sage.py
 
 # Environments
-.env
 .venv
 env/
 venv/
@@ -154,7 +166,6 @@ venv.bak/
 /site
 
 # mypy
-.mypy_cache/
 .dmypy.json
 dmypy.json
 
@@ -175,9 +186,7 @@ cython_debug/
 #.idea/
 
 # Ruff stuff:
-.ruff_cache/
 
 # PyPI configuration file
 .pypirc
 .cursorignore
-.env.test

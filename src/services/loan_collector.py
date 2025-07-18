@@ -10,15 +10,15 @@ import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
 
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from ..models.loan import LoanCreate, LoanStatus
-from src.config import KameoConfig
 from src.auth import KameoAuthenticator
+from src.config import KameoConfig
+from ..models.loan import LoanCreate, LoanStatus
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ class LoanCollectorService:
     and data processing to collect loan information from Kameo.
     """
     
-    def __init__(self, config: KameoConfig, save_raw_data: bool = False):
+    def __init__(self, config: KameoConfig, save_raw_data: bool = False) -> None:
         """
         Initialize the loan collector service.
         
@@ -42,7 +42,7 @@ class LoanCollectorService:
         self.config = config
         self.save_raw_data = save_raw_data
         self.session = requests.Session()
-        self.authenticator = KameoAuthenticator(config.totp_secret)
+        self.authenticator = KameoAuthenticator(config.totp_secret) if config.totp_secret else None
         self.is_authenticated = False
         
         # Setup session with retry strategy
@@ -198,81 +198,72 @@ class LoanCollectorService:
             
         except Exception as e:
             logger.error(f"Failed to fetch loans: {e}")
-            raise
+            return []
     
     def fetch_all_loans(self, max_pages: int = 10) -> List[Dict[str, Any]]:
         """
-        Fetch all available loans by paginating through the API.
+        Fetch all available loans across multiple pages.
         
         Args:
-            max_pages: Maximum number of pages to fetch (safety limit)
+            max_pages: Maximum number of pages to fetch
             
         Returns:
             List of all loan data dictionaries
         """
         all_loans = []
-        page = 1
         
-        while page <= max_pages:
-            loans = self.fetch_loans(page=page)
-            
-            if not loans:
-                logger.info(f"No more loans found at page {page}")
-                break
+        for page in range(1, max_pages + 1):
+            try:
+                loans = self.fetch_loans(page=page)
+                if not loans:
+                    logger.info(f"No more loans found on page {page}")
+                    break
                 
-            all_loans.extend(loans)
-            logger.info(f"Fetched {len(loans)} loans from page {page}, total: {len(all_loans)}")
-            page += 1
+                all_loans.extend(loans)
+                logger.info(f"Fetched {len(loans)} loans from page {page}")
+                
+            except Exception as e:
+                logger.error(f"Error fetching page {page}: {e}")
+                break
         
         logger.info(f"Total loans fetched: {len(all_loans)}")
         return all_loans
     
     def fetch_loan_details(self, loan_id: str) -> Optional[Dict[str, Any]]:
         """
-        Fetch detailed information about a specific loan.
+        Fetch detailed information for a specific loan.
         
         Args:
-            loan_id: The loan ID to fetch details for
+            loan_id: ID of the loan to fetch details for
             
         Returns:
-            Loan details dictionary or None if not found
+            Loan details dictionary or None on error
         """
         if not self.is_authenticated:
             logger.warning("Not authenticated. Attempting to authenticate...")
             if not self.authenticate():
-                raise RuntimeError("Authentication failed")
+                return None
         
-        # URLs based on HAR analysis
-        urls_to_try = [
-            f"https://api.kameo.se/v1/q-a?loan_application_id={loan_id}",
-            f"https://api.kameo.se/v1/bidding/{loan_id}/load",
-        ]
+        api_url = f"https://api.kameo.se/v1/loans/{loan_id}"
         
-        details = {}
-        
-        for url in urls_to_try:
-            try:
-                response = self._make_request('GET', url)
-                data = response.json()
-                
-                # Extract endpoint name from URL for logging
-                endpoint_name = url.split('/')[-1].split('?')[0]
-                details[endpoint_name] = data
-                
-                logger.debug(f"Fetched {endpoint_name} data for loan {loan_id}")
-                
-            except Exception as e:
-                logger.warning(f"Failed to fetch data from {url}: {e}")
-                continue
-        
-        if self.save_raw_data:
-            self._save_raw_data('loan_details', details, loan_id)
-        
-        return details if details else None
+        try:
+            response = self._make_request('GET', api_url)
+            data = response.json()
+            
+            # Save raw data if requested
+            if self.save_raw_data:
+                self._save_raw_data('loan_details', data, loan_id)
+            
+            logger.info(f"Successfully fetched details for loan {loan_id}")
+            return data
+            
+        except Exception as e:
+            logger.error(f"Failed to fetch details for loan {loan_id}: {e}")
+            return None
     
     def convert_to_loan_objects(self, raw_loans: List[Dict[str, Any]]) -> List[LoanCreate]:
         """
-        Convert raw API loan data to LoanCreate objects.
+        Convert raw loan data to LoanCreate objects.
         
         Args:
             raw_loans: List of raw loan dictionaries from API
@@ -288,10 +279,9 @@ class LoanCollectorService:
                 if loan_obj:
                     loan_objects.append(loan_obj)
             except Exception as e:
-                logger.error(f"Failed to convert loan {raw_loan.get('id', 'unknown')}: {e}")
-                continue
+                logger.error(f"Error converting loan {raw_loan.get('id', 'unknown')}: {e}")
         
-        logger.info(f"Successfully converted {len(loan_objects)} loans")
+        logger.info(f"Converted {len(loan_objects)} out of {len(raw_loans)} raw loans")
         return loan_objects
     
     def _convert_single_loan(self, raw_loan: Dict[str, Any]) -> Optional[LoanCreate]:
@@ -305,111 +295,113 @@ class LoanCollectorService:
             LoanCreate object or None if conversion fails
         """
         try:
-            # Extract basic loan information. Prefer new keys, but fall back to the
-            # simplified keys that are used in the unit-tests.
-            loan_id = str(
-                raw_loan.get('loan_application_id')
-                or raw_loan.get('id')
-                or ''
-            )
-            title = raw_loan.get('title', '').strip()
+            # Extract basic fields
+            loan_id = str(raw_loan.get('id', ''))
+            title = raw_loan.get('title', '')
+            amount_str = raw_loan.get('amount', '0')
+            interest_rate_str = raw_loan.get('interest_rate', '0')
             
-            # Parse amount - use application_amount from API
-            amount_str = (
-                raw_loan.get('application_amount')
-                or raw_loan.get('amount')
-                or '0'
-            )
-            amount = Decimal(str(amount_str).replace(',', '.').replace(' ', ''))
+            # Convert amount to Decimal
+            try:
+                amount = Decimal(str(amount_str))
+            except (ValueError, TypeError):
+                amount = Decimal('0')
             
-            # Parse interest rate - use annual_interest_rate from API
-            interest_rate = None
-            if 'annual_interest_rate' in raw_loan or 'interest_rate' in raw_loan:
-                interest_rate_raw = raw_loan.get('annual_interest_rate', raw_loan.get('interest_rate'))
-                interest_rate = Decimal(str(interest_rate_raw).replace(',', '.').replace('%', ''))
+            # Convert interest rate to Decimal
+            try:
+                interest_rate = Decimal(str(interest_rate_str))
+            except (ValueError, TypeError):
+                interest_rate = None
             
-            # Parse dates - map to actual API date fields
-            open_date = self._parse_date(raw_loan.get('subscription_starts_at'))
-            close_date = self._parse_date(raw_loan.get('subscription_ends_at'))
-            
-            # Parse funding progress - calculate from subscribed vs application amount
-            funding_progress = None
-            subscribed_amount = (
-                raw_loan.get('subscribed_amount')
-                or raw_loan.get('funded_amount')
-                or 0
-            )
-            if amount > 0 and subscribed_amount > 0:
-                funding_progress = Decimal((subscribed_amount / float(amount)) * 100)
-            
-            # Parse funded amount - use subscribed_amount from API
-            funded_amount = None
-            if 'subscribed_amount' in raw_loan or 'funded_amount' in raw_loan:
-                funded_amount_raw = raw_loan.get('subscribed_amount', raw_loan.get('funded_amount'))
-                funded_amount = Decimal(str(funded_amount_raw).replace(',', '.').replace(' ', ''))
+            # Parse dates
+            open_date = self._parse_date(raw_loan.get('open_date'))
+            close_date = self._parse_date(raw_loan.get('close_date'))
             
             # Determine status
             status = self._determine_loan_status(raw_loan)
             
-            # Build URL
-            url = raw_loan.get('url') or f"https://www.kameo.se/listing/investment-option/{loan_id}"
+            # Extract additional fields
+            funding_progress = raw_loan.get('funding_progress')
+            if funding_progress is not None:
+                try:
+                    funding_progress = Decimal(str(funding_progress))
+                except (ValueError, TypeError):
+                    funding_progress = None
             
-            # Build and validate the Pydantic model. Any validation errors are
-            # captured by the surrounding try/except so that they don't abort
-            # the entire fetch cycle.
-            return LoanCreate(
+            funded_amount = raw_loan.get('funded_amount')
+            if funded_amount is not None:
+                try:
+                    funded_amount = Decimal(str(funded_amount))
+                except (ValueError, TypeError):
+                    funded_amount = None
+            
+            # Create LoanCreate object
+            loan_obj = LoanCreate(
                 loan_id=loan_id,
                 title=title,
-                status=status,
                 amount=amount,
                 interest_rate=interest_rate,
+                status=status,
                 open_date=open_date,
                 close_date=close_date,
                 funding_progress=funding_progress,
                 funded_amount=funded_amount,
-                url=url,
-                description=raw_loan.get('description', ''),
-                raw_data=raw_loan,
+                url=raw_loan.get('url'),
+                description=raw_loan.get('description'),
+                raw_data=raw_loan if self.save_raw_data else None,
                 borrower_type=raw_loan.get('borrower_type'),
                 loan_type=raw_loan.get('loan_type'),
                 risk_grade=raw_loan.get('risk_grade'),
                 duration_months=raw_loan.get('duration_months')
             )
             
+            return loan_obj
+            
         except Exception as e:
-            logger.error(f"Failed to convert loan data: {e}")
+            logger.error(f"Error converting loan {raw_loan.get('id', 'unknown')}: {e}")
             return None
     
     def _parse_date(self, date_str: Optional[str]) -> Optional[datetime]:
-        """Parse date string to datetime object."""
+        """
+        Parse date string to datetime object.
+        
+        Args:
+            date_str: Date string in various formats
+            
+        Returns:
+            datetime object or None if parsing fails
+        """
         if not date_str:
             return None
         
-        try:
-            # Try different date formats
-            formats = [
-                '%Y-%m-%d %H:%M:%S',
-                '%Y-%m-%d',
-                '%Y-%m-%dT%H:%M:%S',
-                '%Y-%m-%dT%H:%M:%S.%f',
-                '%Y-%m-%dT%H:%M:%SZ',
-            ]
-            
-            for fmt in formats:
-                try:
-                    return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
-                except ValueError:
-                    continue
-            
-            logger.warning(f"Failed to parse date: {date_str}")
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error parsing date {date_str}: {e}")
-            return None
+        # Try various date formats
+        date_formats = [
+            '%Y-%m-%d',
+            '%Y-%m-%d %H:%M:%S',
+            '%Y-%m-%dT%H:%M:%S',
+            '%Y-%m-%dT%H:%M:%SZ',
+            '%Y-%m-%dT%H:%M:%S.%fZ'
+        ]
+        
+        for fmt in date_formats:
+            try:
+                return datetime.strptime(date_str, fmt).replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
+        
+        logger.warning(f"Could not parse date: {date_str}")
+        return None
     
     def _determine_loan_status(self, raw_loan: Dict[str, Any]) -> LoanStatus:
-        """Determine loan status from raw data."""
+        """
+        Determine loan status from raw data.
+        
+        Args:
+            raw_loan: Raw loan dictionary
+            
+        Returns:
+            LoanStatus enum value
+        """
         status_str = raw_loan.get('status', '').lower()
         
         status_mapping = {
@@ -419,80 +411,106 @@ class LoanCollectorService:
             'active': LoanStatus.ACTIVE,
             'completed': LoanStatus.COMPLETED,
             'canceled': LoanStatus.CANCELED,
-            'cancelled': LoanStatus.CANCELED,
+            'cancelled': LoanStatus.CANCELED
         }
         
         return status_mapping.get(status_str, LoanStatus.UNKNOWN)
     
     def _save_raw_data(self, data_type: str, data: Any, identifier: Any = None) -> None:
-        """Save raw API data to file for debugging."""
+        """
+        Save raw API data to file for debugging.
+        
+        Args:
+            data_type: Type of data being saved
+            data: Data to save
+            identifier: Optional identifier for the data
+        """
         try:
-            logs_dir = Path('logs/debug')
-            logs_dir.mkdir(parents=True, exist_ok=True)
+            # Create data directory if it doesn't exist
+            data_dir = Path('data/raw')
+            data_dir.mkdir(parents=True, exist_ok=True)
             
+            # Create filename
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            filename = f"{data_type}_{identifier}_{timestamp}.json" if identifier else f"{data_type}_{timestamp}.json"
-            filepath = logs_dir / filename
+            if identifier:
+                filename = f"{data_type}_{identifier}_{timestamp}.json"
+            else:
+                filename = f"{data_type}_{timestamp}.json"
             
+            filepath = data_dir / filename
+            
+            # Save data as JSON
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False, default=str)
             
             logger.debug(f"Saved raw data to {filepath}")
             
         except Exception as e:
-            logger.error(f"Failed to save raw data: {e}")
+            logger.error(f"Error saving raw data: {e}")
     
     def collect_and_save_all_fields(self) -> Dict[str, Any]:
         """
-        Collect all available loan data fields for testing and debugging.
-        
-        This method fetches loan data and analyzes all available fields
-        to help understand the API response structure.
+        Collect and save all available fields from the API for analysis.
         
         Returns:
-            Dictionary containing analysis of all fields found
+            Dictionary with field analysis results
         """
-        logger.info("Collecting all loan data fields for analysis...")
+        logger.info("Starting field analysis...")
         
-        # Fetch loans
-        loans = self.fetch_all_loans(max_pages=3)  # Limit for testing
-        
-        # Analyze all fields
-        all_fields = set()
-        field_examples = {}
-        field_types = {}
-        
-        for loan in loans:
-            for key, value in loan.items():
-                all_fields.add(key)
-                
-                # Store example values
-                if key not in field_examples:
-                    field_examples[key] = value
-                
-                # Track field types
-                field_type = type(value).__name__
-                if key not in field_types:
-                    field_types[key] = set()
-                field_types[key].add(field_type)
-        
-        analysis = {
-            'total_loans': len(loans),
-            'all_fields': sorted(all_fields),
-            'field_examples': field_examples,
-            'field_types': {k: list(v) for k, v in field_types.items()},
-            'sample_loans': loans[:3] if loans else []
-        }
-        
-        # Save analysis
-        if self.save_raw_data:
-            self._save_raw_data('field_analysis', analysis)
-        
-        logger.info(f"Found {len(all_fields)} unique fields across {len(loans)} loans")
-        return analysis
+        try:
+            # Fetch a few loans to analyze fields
+            loans = self.fetch_loans(limit=5)
+            
+            if not loans:
+                return {'error': 'No loans found for analysis'}
+            
+            # Analyze fields from all loans
+            all_fields: set[str] = set()
+            field_types: Dict[str, set[str]] = {}
+            field_values: Dict[str, List[str]] = {}
+            
+            for loan in loans:
+                for key, value in loan.items():
+                    all_fields.add(key)
+                    
+                    # Track value types
+                    value_type = type(value).__name__
+                    if key not in field_types:
+                        field_types[key] = set()
+                    field_types[key].add(value_type)
+                    
+                    # Track sample values
+                    if key not in field_values:
+                        field_values[key] = []
+                    if len(field_values[key]) < 3:  # Keep up to 3 sample values
+                        field_values[key].append(str(value)[:100])  # Truncate long values
+            
+            # Save analysis results
+            analysis: Dict[str, Any] = {
+                'total_loans_analyzed': len(loans),
+                'total_fields_found': len(all_fields),
+                'fields': {}
+            }
+            
+            for field in sorted(all_fields):
+                analysis['fields'][field] = {
+                    'types': list(field_types.get(field, [])),
+                    'sample_values': field_values.get(field, [])
+                }
+            
+            # Save analysis to file
+            if self.save_raw_data:
+                self._save_raw_data('field_analysis', analysis)
+            
+            logger.info(f"Field analysis complete: {len(all_fields)} fields found")
+            return analysis
+            
+        except Exception as e:
+            logger.error(f"Error in field analysis: {e}")
+            return {'error': str(e)}
     
     def close(self) -> None:
-        """Clean up resources."""
-        if hasattr(self, 'session'):
+        """Close the service and clean up resources."""
+        if self.session:
             self.session.close()
         logger.info("LoanCollectorService closed") 
