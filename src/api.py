@@ -1,25 +1,17 @@
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
-from uuid import uuid4
-import threading
 import logging
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
+from datetime import datetime
 
-from src.services.loan_collector import LoanCollectorService
-from src.config import KameoConfig
+from src.services.job_service import get_job_service, get_loan_fetch_service
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="KameoBot Async API", version="1.0.0")
-
-
-class JobStatus(str):
-    PENDING = "pending"
-    SUCCESS = "success"
-    FAILED = "failed"
 
 
 class StandardResponse(BaseModel):
@@ -28,26 +20,22 @@ class StandardResponse(BaseModel):
     data: Optional[Dict[str, Any]] = None
 
 
-# In-memory job registry (simple demo – replace with DB/Redis for prod)
-_jobs: Dict[str, Dict[str, Any]] = {}
+# Secure CORS configuration
+allowed_origins = [
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
+    "http://localhost:3000",  # Common React dev port
+]
 
+# Only allow all origins in development/test mode
+if os.getenv("ENVIRONMENT") == "development" or os.getenv("TEST_MODE") == "1":
+    allowed_origins = ["*"]
 
-def _register_job() -> str:
-    job_id = str(uuid4())
-    _jobs[job_id] = {"status": JobStatus.PENDING, "error": None, "data": None}
-    return job_id
-
-
-def _update_job(job_id: str, *, status: str, error: Optional[str] = None, data: Any = None):
-    if job_id in _jobs:
-        _jobs[job_id].update({"status": status, "error": error, "data": data})
-
-
-# Enable CORS for localhost frontend/demo
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost", "http://localhost:8000", "*"],  # simple for demo
-    allow_methods=["*"],
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -58,38 +46,74 @@ if os.path.isdir(DOCS_DIR):
     app.mount("/docs", StaticFiles(directory=DOCS_DIR), name="docs")
 
 
-# === Example async job: fetch loans ===
-
-def _fetch_loans_job(job_id: str, limit: int = 12, page: int = 1):
-    """Background job to fetch loans via LoanCollectorService or dummy in test mode"""
-    try:
-        if os.getenv("TEST_MODE") == "1":
-            # Return dummy data quickly for local tests
-            dummy_loans = [{"id": 1, "title": "Dummy Loan", "amount": 100000}]
-            _update_job(job_id, status=JobStatus.SUCCESS, data={"loans": dummy_loans})
-            return
-
-        config = KameoConfig()  # type: ignore[arg-type]  # load from env
-        svc = LoanCollectorService(config)
-        loans = svc.fetch_loans(limit=limit, page=page)
-        _update_job(job_id, status=JobStatus.SUCCESS, data={"loans": loans})
-    except Exception as exc:
-        logger.exception("Fetch loans job failed")
-        _update_job(job_id, status=JobStatus.FAILED, error=str(exc))
+@app.on_event("startup")
+async def startup_event():
+    """Cleanup old jobs on startup"""
+    job_service = get_job_service()
+    job_service.cleanup_old_jobs()
 
 
 @app.post("/api/jobs/fetch-loans", response_model=StandardResponse)
-async def start_fetch_loans(background_tasks: BackgroundTasks, limit: int = 12, page: int = 1):
+async def start_fetch_loans(limit: int = 12, page: int = 1):
     """Start an asynchronous job that fetches loans. Returns a job ID."""
-    job_id = _register_job()
-    background_tasks.add_task(_fetch_loans_job, job_id, limit, page)
-    return StandardResponse(status=JobStatus.PENDING, data={"job_id": job_id})
+    # Validate parameters
+    if limit < 1 or limit > 100:
+        raise HTTPException(status_code=400, detail="Limit must be between 1 and 100")
+    if page < 1:
+        raise HTTPException(status_code=400, detail="Page must be >= 1")
+    
+    # Cleanup old jobs before creating new one
+    job_service = get_job_service()
+    job_service.cleanup_old_jobs()
+    
+    # Start loan fetch job
+    loan_fetch_service = get_loan_fetch_service()
+    test_mode = os.getenv("TEST_MODE") == "1"
+    job_id = loan_fetch_service.start_fetch_loans_job(limit=limit, page=page, test_mode=test_mode)
+    
+    return StandardResponse(
+        status="pending", 
+        data={"job_id": job_id, "message": "Job started successfully"}
+    )
 
 
 @app.get("/api/jobs/{job_id}", response_model=StandardResponse)
 async def get_job_status(job_id: str):
     """Poll the status of a previously started job."""
-    job = _jobs.get(job_id)
+    job_service = get_job_service()
+    job = job_service.get_job(job_id)
+    
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return StandardResponse(**job) 
+    
+    return StandardResponse(**job)
+
+
+@app.get("/api/jobs", response_model=Dict[str, Any])
+async def list_jobs():
+    """List all active jobs (for debugging)"""
+    job_service = get_job_service()
+    return job_service.list_jobs()
+
+
+@app.delete("/api/jobs/{job_id}")
+async def cancel_job(job_id: str):
+    """Cancel a specific job"""
+    job_service = get_job_service()
+    success = job_service.cancel_job(job_id)
+    
+    if not success:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return {"message": f"Job {job_id} marked as cancelled"}
+
+
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint"""
+    job_service = get_job_service()
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "active_jobs": job_service.get_active_job_count()
+    } 

@@ -76,10 +76,12 @@
     // Zustand store
     const useJobStore = create((set) => ({
       jobId: null,
-      status: "idle", // idle | pending | success | failed
+      status: "idle", // idle | pending | success | failed | timeout
       result: null,
       error: null,
+      startTime: null,
       setJob: (data) => set(data),
+      reset: () => set({ jobId: null, status: "idle", result: null, error: null, startTime: null }),
     }));
 
     function Spinner() {
@@ -87,69 +89,160 @@
     }
 
     function App() {
-      const { jobId, status, result, error, setJob } = useJobStore();
+      const { jobId, status, result, error, startTime, setJob, reset } = useJobStore();
       const [pollInterval, setPollInterval] = useState(null);
+      
+      const TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes timeout
+      const POLL_INTERVAL_MS = 2000; // Poll every 2 seconds
 
       const startJob = async () => {
         try {
-          setJob({ status: "pending", error: null, result: null });
+          reset();
+          setJob({ status: "pending", error: null, result: null, startTime: Date.now() });
+          
           const res = await fetch("http://localhost:8000/api/jobs/fetch-loans", {
             method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
           });
+          
+          if (!res.ok) {
+            const errorData = await res.json();
+            throw new Error(errorData.detail || `HTTP ${res.status}`);
+          }
+          
           const data = await res.json();
           if (data.status === "pending") {
             setJob({ jobId: data.data.job_id, status: "pending" });
           } else {
-            setJob({ status: "failed", error: "Unexpected response" });
+            setJob({ status: "failed", error: "Unexpected response format" });
           }
         } catch (e) {
-          setJob({ status: "failed", error: e.message || "Nätverksfel" });
+          console.error("Failed to start job:", e);
+          setJob({ status: "failed", error: e.message || "Nätverksfel vid start av jobb" });
         }
       };
 
-      // Polling effect
+      // Enhanced polling effect with timeout
       useEffect(() => {
-        if (status === "pending" && jobId) {
+        if (status === "pending" && jobId && startTime) {
           const id = setInterval(async () => {
+            // Check for timeout
+            if (Date.now() - startTime > TIMEOUT_MS) {
+              setJob({ status: "failed", error: "Timeout - processen tog för lång tid (>5 min)" });
+              clearInterval(id);
+              return;
+            }
+            
             try {
-              const res = await fetch(
-                `http://localhost:8000/api/jobs/${jobId}`
-              );
+              const res = await fetch(`http://localhost:8000/api/jobs/${jobId}`);
+              
+              if (!res.ok) {
+                if (res.status === 404) {
+                  setJob({ status: "failed", error: "Jobbet hittades inte (kanske rensades bort)" });
+                } else {
+                  const errorData = await res.json();
+                  setJob({ status: "failed", error: errorData.detail || `HTTP ${res.status}` });
+                }
+                clearInterval(id);
+                return;
+              }
+              
               const data = await res.json();
+              
               if (data.status === "success") {
                 setJob({ status: "success", result: data.data });
                 clearInterval(id);
               } else if (data.status === "failed") {
-                setJob({ status: "failed", error: data.error || "Fel" });
+                setJob({ status: "failed", error: data.error || "Okänt fel från servern" });
                 clearInterval(id);
               }
+              // If still pending, continue polling
+              
             } catch (e) {
-              setJob({ status: "failed", error: e.message || "Nätverksfel" });
+              console.error("Polling error:", e);
+              setJob({ status: "failed", error: e.message || "Nätverksfel vid polling" });
               clearInterval(id);
             }
-          }, 2000);
+          }, POLL_INTERVAL_MS);
+          
           setPollInterval(id);
-          return () => clearInterval(id);
+          
+          return () => {
+            clearInterval(id);
+            setPollInterval(null);
+          };
         }
-      }, [status, jobId]);
+      }, [status, jobId, startTime]);
+
+      // Cleanup interval on unmount
+      useEffect(() => {
+        return () => {
+          if (pollInterval) {
+            clearInterval(pollInterval);
+          }
+        };
+      }, [pollInterval]);
+
+      const formatElapsedTime = () => {
+        if (!startTime) return "";
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        return `(${elapsed}s)`;
+      };
+
+      const formatResult = (result) => {
+        if (!result) return "Inget resultat";
+        
+        if (result.loans && Array.isArray(result.loans)) {
+          return `Hittade ${result.loans.length} lån:\n\n${JSON.stringify(result.loans, null, 2)}`;
+        }
+        
+        return JSON.stringify(result, null, 2);
+      };
 
       return (
         <div className="card">
           <h2>Hämta lån asynkront</h2>
           <button onClick={startJob} disabled={status === "pending"}>
-            {status === "pending" ? "Arbetar..." : "Starta"}
+            {status === "pending" ? `Arbetar... ${formatElapsedTime()}` : "Starta"}
           </button>
 
-          {status === "pending" && <Spinner />}
+          {status === "pending" && (
+            <div>
+              <Spinner />
+              <p style={{ fontSize: "0.9rem", color: "#666", marginTop: "8px" }}>
+                Hämtar data från Kameo... {formatElapsedTime()}
+              </p>
+            </div>
+          )}
 
           {status === "success" && (
-            <div className="result">
-              {JSON.stringify(result, null, 2)}
+            <div>
+              <p style={{ color: "green", fontWeight: "bold" }}>✅ Framgång!</p>
+              <div className="result">
+                {formatResult(result)}
+              </div>
+              <button onClick={reset} style={{ marginTop: "16px", background: "#28a745" }}>
+                Kör igen
+              </button>
             </div>
           )}
 
           {status === "failed" && (
-            <p style={{ color: "red" }}>Fel: {error}</p>
+            <div>
+              <p style={{ color: "red", fontWeight: "bold" }}>❌ Fel uppstod:</p>
+              <p style={{ color: "red", fontSize: "0.9rem" }}>{error}</p>
+              <button onClick={reset} style={{ marginTop: "16px", background: "#dc3545" }}>
+                Försök igen
+              </button>
+            </div>
+          )}
+
+          {status === "idle" && (
+            <p style={{ color: "#666", fontSize: "0.9rem", marginTop: "16px" }}>
+              Klicka på "Starta" för att hämta lån från Kameo API
+            </p>
           )}
         </div>
       );
