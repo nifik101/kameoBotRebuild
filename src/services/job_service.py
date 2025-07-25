@@ -8,6 +8,9 @@ import threading
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 from uuid import uuid4
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+
 
 from src.config import KameoConfig
 from src.services.loan_collector import LoanCollectorService
@@ -30,7 +33,27 @@ class JobService:
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._jobs_lock = threading.Lock()
         self._cleanup_interval_hours = 1
+        self._scheduler = BackgroundScheduler(daemon=True)
     
+    def start_scheduler(self):
+        """Start the background cleanup scheduler"""
+        if not self._scheduler.running:
+            self._scheduler.add_job(
+                self.cleanup_old_jobs,
+                trigger=IntervalTrigger(hours=self._cleanup_interval_hours),
+                id="job_cleanup_task",
+                name="Periodic Job Cleanup",
+                replace_existing=True,
+            )
+            self._scheduler.start()
+            logger.info("Started periodic job cleanup scheduler.")
+
+    def stop_scheduler(self):
+        """Stop the background cleanup scheduler"""
+        if self._scheduler.running:
+            self._scheduler.shutdown()
+            logger.info("Stopped periodic job cleanup scheduler.")
+
     def create_job(self) -> str:
         """Create a new job and return its ID"""
         job_id = str(uuid4())

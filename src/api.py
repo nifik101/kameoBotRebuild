@@ -48,9 +48,16 @@ if os.path.isdir(DOCS_DIR):
 
 @app.on_event("startup")
 async def startup_event():
-    """Cleanup old jobs on startup"""
+    """Cleanup old jobs on startup and start scheduler"""
     job_service = get_job_service()
     job_service.cleanup_old_jobs()
+    job_service.start_scheduler()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Stop the scheduler on shutdown"""
+    job_service = get_job_service()
+    job_service.stop_scheduler()
 
 
 @app.post("/api/jobs/fetch-loans", response_model=StandardResponse)
@@ -61,10 +68,6 @@ async def start_fetch_loans(limit: int = 12, page: int = 1):
         raise HTTPException(status_code=400, detail="Limit must be between 1 and 100")
     if page < 1:
         raise HTTPException(status_code=400, detail="Page must be >= 1")
-    
-    # Cleanup old jobs before creating new one
-    job_service = get_job_service()
-    job_service.cleanup_old_jobs()
     
     # Start loan fetch job
     loan_fetch_service = get_loan_fetch_service()
