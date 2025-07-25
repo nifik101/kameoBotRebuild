@@ -419,32 +419,36 @@ class LoanCollectorService:
     def _save_raw_data(self, data_type: str, data: Any, identifier: Any = None) -> None:
         """
         Save raw API data to file for debugging.
-        
         Args:
             data_type: Type of data being saved
             data: Data to save
             identifier: Optional identifier for the data
         """
         try:
-            # Create data directory if it doesn't exist
-            data_dir = Path('data/raw')
+            import os
+            cwd = str(Path.cwd())
+            # Spara testdata i logs/debug om vi kör test, annars i data/raw
+            if 'pytest' in cwd or 'test' in cwd:
+                data_dir = Path('logs/debug')
+            else:
+                data_dir = Path('data/raw')
             data_dir.mkdir(parents=True, exist_ok=True)
-            
+
             # Create filename
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             if identifier:
                 filename = f"{data_type}_{identifier}_{timestamp}.json"
             else:
                 filename = f"{data_type}_{timestamp}.json"
-            
+
             filepath = data_dir / filename
-            
+
             # Save data as JSON
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(data, f, indent=2, ensure_ascii=False, default=str)
-            
+
             logger.debug(f"Saved raw data to {filepath}")
-            
+
         except Exception as e:
             logger.error(f"Error saving raw data: {e}")
     

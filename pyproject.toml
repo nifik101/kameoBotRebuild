@@ -1,0 +1,19 @@
+[project]
+name = "kameobotrebuild"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.13.0",
+    "beautifulsoup4>=4.12.0",
+    "click>=8.0.0",
+    "httpx>=0.27.0",
+    "pydantic>=2.11.3",
+    "pydantic-settings>=2.9.0",
+    "pyotp>=2.9.0",
+    "pytest>=8.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.31.0",
+    "responses>=0.24.0",
+    "ruff>=0.11.7",
+    "sqlalchemy>=2.0.0",
+]

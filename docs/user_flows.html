@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KameoBot - Användarflöden</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Arial, sans-serif;
+      background: #f7f7fa;
+      margin: 0;
+      padding: 0;
+      color: #222;
+    }
+    .container {
+      max-width: 700px;
+      margin: 40px auto;
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.07);
+      padding: 32px 24px 24px 24px;
+    }
+    h1 {
+      font-size: 2.1em;
+      margin-bottom: 0.2em;
+    }
+    .desc {
+      color: #555;
+      margin-bottom: 2em;
+      font-size: 1.1em;
+    }
+    .flow {
+      margin-bottom: 1.5em;
+      border-bottom: 1px solid #eee;
+      padding-bottom: 1em;
+    }
+    .flow-header {
+      font-size: 1.18em;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      transition: background 0.15s;
+      padding: 0.4em 0.2em;
+      border-radius: 5px;
+    }
+    .flow-header:hover {
+      background: #f0f4fa;
+    }
+    .arrow {
+      margin-right: 0.7em;
+      font-size: 1.1em;
+      transition: transform 0.2s;
+    }
+    .flow.open .arrow {
+      transform: rotate(90deg);
+    }
+    .steps {
+      margin-left: 2.1em;
+      margin-top: 0.5em;
+      padding-left: 0.5em;
+      border-left: 2px solid #e0e6f0;
+      animation: fadeIn 0.3s;
+    }
+    .step {
+      margin: 0.3em 0;
+      padding: 0.3em 0.7em;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 0.13s;
+      font-size: 1em;
+      color: #2a3a5a;
+      position: relative;
+    }
+    .step:hover {
+      background: #eaf2ff;
+      color: #1a2a4a;
+    }
+    @media (max-width: 600px) {
+      .container { padding: 12px 4vw; }
+      h1 { font-size: 1.3em; }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>KameoBot – Användarflöden</h1>
+    <div class="desc">
+      Den här översikten visar alla större användarflöden i systemet. Klicka på ett huvudflöde för att se dess viktigaste delsteg. Klicka på ett delsteg för att visa dess namn (eller för att i framtiden utföra en åtgärd).
+    </div>
+    <div id="flows"></div>
+  </div>
+  <script>
+    const flows = [
+      {
+        title: "Samla in och spara lånedata från Kameo",
+        steps: [
+          "Autentisera mot Kameo (inklusive 2FA om nödvändigt)",
+          "Hämta alla tillgängliga lån via Kameos API (paginering stöds)",
+          "Konvertera rå lånedata till interna objekt",
+          "Spara lånedata i databasen",
+          "Rapportera antal hämtade och sparade lån"
+        ]
+      },
+      {
+        title: "Analysera lånedata och fält",
+        steps: [
+          "Hämta all tillgänglig lånedata från databasen",
+          "Utföra fältanalys (t.ex. kontrollera datatyper, saknade värden, statistik)",
+          "Spara analysresultat till fil",
+          "Rapportera analysens status och resultat"
+        ]
+      },
+      {
+        title: "Visa statistik över lån i databasen",
+        steps: [
+          "Hämta statistik från databasen (t.ex. antal lån, aktiva lån, totalbelopp, snittränta)",
+          "Presentera statistik på ett överskådligt sätt"
+        ]
+      },
+      {
+        title: "Lista tillgängliga lån för budgivning",
+        steps: [
+          "Hämta tillgängliga lån för budgivning via API",
+          "Presentera lån med relevanta detaljer (ID, titel, belopp, ränta, löptid)"
+        ]
+      },
+      {
+        title: "Analysera ett specifikt lån för budgivning",
+        steps: [
+          "Hämta detaljerad information om valt lån",
+          "Utföra analys av lånets budgivningspotential (t.ex. risknivå, rekommenderat bud)",
+          "Presentera analysresultat och rekommendationer"
+        ]
+      },
+      {
+        title: "Lägga bud på ett lån",
+        steps: [
+          "Hämta och validera lånedata och budparametrar",
+          "Skicka bud via Kameos API (inklusive hantering av sekvenshash och betalningsalternativ)",
+          "Hantera och visa resultat (inklusive fel, rate limiting, sekvenshash)"
+        ]
+      },
+      {
+        title: "Demo av budgivningsflöde",
+        steps: [
+          "Lista tillgängliga lån (demo)",
+          "Analysera ett lån (demo)",
+          "Presentera demoresultat"
+        ]
+      }
+    ];
+
+    const flowsDiv = document.getElementById('flows');
+    flows.forEach((flow, idx) => {
+      const flowDiv = document.createElement('div');
+      flowDiv.className = 'flow';
+      flowDiv.innerHTML = `
+        <div class="flow-header" tabindex="0">
+          <span class="arrow">▶</span>
+          <span>${flow.title}</span>
+        </div>
+        <div class="steps" style="display:none;"></div>
+      `;
+      const header = flowDiv.querySelector('.flow-header');
+      const stepsDiv = flowDiv.querySelector('.steps');
+      // Fyll steg
+      flow.steps.forEach(step => {
+        const stepDiv = document.createElement('div');
+        stepDiv.className = 'step';
+        stepDiv.tabIndex = 0;
+        stepDiv.textContent = step;
+        stepDiv.onclick = () => alert(step);
+        stepDiv.onkeydown = e => { if(e.key==='Enter'||e.key===' '){ stepDiv.click(); } };
+        stepsDiv.appendChild(stepDiv);
+      });
+      // Expand/collapse
+      header.onclick = () => {
+        const open = flowDiv.classList.toggle('open');
+        stepsDiv.style.display = open ? '' : 'none';
+      };
+      header.onkeydown = e => { if(e.key==='Enter'||e.key===' '){ header.click(); } };
+      flowsDiv.appendChild(flowDiv);
+    });
+  </script>
+</body>
+</html> 
