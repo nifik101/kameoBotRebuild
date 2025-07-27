@@ -3,10 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Async Process Demo</title>
+  <title>Async Job Demo</title>
+  <!-- Dependencies from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/zustand/umd/zustand.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
     body {
-      font-family: Arial, sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
       background: #f7f7fa;
       display: flex;
       align-items: center;
@@ -62,16 +68,12 @@
       white-space: pre-wrap;
     }
   </style>
-  <!-- React & Zustand via CDN -->
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script crossorigin src="https://unpkg.com/zustand/umd/zustand.min.js"></script>
 </head>
 <body>
   <div id="root"></div>
-  <script type="text/javascript">
-    const { useEffect, useState } = React;
-    const create = window.zustand.create;
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const { create } = zustand; // Zustand attaches itself to the window object
 
     // Zustand store
     const useJobStore = create((set) => ({
@@ -247,8 +249,11 @@
         </div>
       );
     }
+    
+    const container = document.getElementById('root');
+    const root = ReactDOM.createRoot(container);
+    root.render(<App />);
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
   </script>
 </body>
 </html> 
