@@ -8,7 +8,6 @@ from pydantic import ValidationError
 # Set test mode before importing the API
 os.environ["TEST_MODE"] = "1"
 from src.api import app, _jobs, _jobs_lock, _cleanup_old_jobs, _register_job, _update_job
-from src.config import KameoConfig
 
 
 @pytest.fixture
@@ -297,7 +296,6 @@ class TestErrorHandling:
     def test_concurrent_job_access(self, client, clean_jobs):
         """Test thread safety of job operations"""
         import threading
-        import time
         
         results = []
         

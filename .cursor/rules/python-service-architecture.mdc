@@ -1,0 +1,336 @@
+# Python Service Layer Architecture Guidelines
+
+## Core Principles
+
+### 1. Service Layer Pattern
+Always structure Python projects with clear separation between layers:
+
+```
+User Interface (CLI/API) → Service Layer → Core Services → External Systems
+```
+
+**Service Layer Responsibilities:**
+- Coordinate business logic flows
+- Orchestrate multiple core services
+- Provide unified interface for user interfaces
+- Handle cross-cutting concerns (logging, error handling)
+
+**Core Services Responsibilities:**
+- Single, focused responsibility
+- No knowledge of other services
+- Pure business logic
+- Reusable across different interfaces
+
+### 2. Dependency Injection
+Never create dependencies inside classes. Inject them:
+
+```python
+# ❌ BAD - Hard-coded dependencies
+class UserService:
+    def __init__(self):
+        self.db = Database()  # Hard-coded dependency
+        self.email = EmailService()  # Hard-coded dependency
+
+# ✅ GOOD - Injected dependencies
+class UserService:
+    def __init__(self, db: Database, email_service: EmailService):
+        self.db = db
+        self.email_service = email_service
+```
+
+### 3. Single Responsibility Principle
+Each class should have one reason to change:
+
+```python
+# ❌ BAD - Multiple responsibilities
+class LoanManager:
+    def fetch_loans(self): pass      # Data fetching
+    def save_to_database(self): pass # Data persistence
+    def send_notifications(self): pass # Communication
+    def validate_data(self): pass    # Validation
+
+# ✅ GOOD - Single responsibility
+class LoanCollectorService:  # Only fetches data
+    def fetch_loans(self): pass
+
+class LoanRepository:  # Only handles persistence
+    def save_loans(self): pass
+
+class NotificationService:  # Only handles communication
+    def send_notification(self): pass
+```
+
+## File Structure Guidelines
+
+### Required Directory Structure
+```
+src/
+├── services/           # Core business logic services
+│   ├── __init__.py
+│   ├── user_service.py
+│   ├── loan_service.py
+│   └── notification_service.py
+├── api/               # Web API layer
+│   ├── __init__.py
+│   ├── routes.py
+│   └── models.py
+├── cli/               # Command-line interface
+│   ├── __init__.py
+│   └── commands.py
+├── models/            # Data models
+│   ├── __init__.py
+│   └── base.py
+├── config/            # Configuration management
+│   ├── __init__.py
+│   └── settings.py
+└── utils/             # Shared utilities
+    ├── __init__.py
+    └── helpers.py
+```
+
+### Naming Conventions
+- **Services**: `{Domain}Service` (e.g., `LoanService`, `UserService`)
+- **Repositories**: `{Domain}Repository` (e.g., `LoanRepository`, `UserRepository`)
+- **API endpoints**: `{domain}_operations.py` (e.g., `loan_operations.py`)
+- **CLI commands**: `{domain}_commands.py` (e.g., `loan_commands.py`)
+
+## Code Patterns
+
+### Service Layer Implementation
+```python
+# src/services/loan_operations_service.py
+class LoanOperationsService:
+    """Unified service for loan operations used by both CLI and API."""
+    
+    def __init__(self, loan_collector: LoanCollectorService, 
+                 loan_repository: LoanRepository,
+                 bidding_service: BiddingService):
+        self.loan_collector = loan_collector
+        self.loan_repository = loan_repository
+        self.bidding_service = bidding_service
+    
+    def fetch_and_save_loans(self, max_pages: int = 10) -> Dict[str, Any]:
+        """Orchestrate the complete loan fetching and saving flow."""
+        # Step 1: Fetch data using core service
+        raw_loans = self.loan_collector.fetch_all_loans(max_pages=max_pages)
+        
+        # Step 2: Convert using core service
+        loan_objects = self.loan_collector.convert_to_loan_objects(raw_loans)
+        
+        # Step 3: Save using repository
+        save_results = self.loan_repository.save_loans(loan_objects)
+        
+        return {
+            'status': 'success',
+            'raw_loans_count': len(raw_loans),
+            'converted_loans_count': len(loan_objects),
+            'save_results': save_results
+        }
+```
+
+### API Layer Implementation
+```python
+# src/api/loan_operations.py
+@app.post("/api/loans/fetch")
+async def fetch_loans(max_pages: int = 10):
+    """API endpoint that uses service layer."""
+    try:
+        # Get service from dependency injection container
+        loan_service = get_loan_operations_service()
+        result = loan_service.fetch_and_save_loans(max_pages)
+        return StandardResponse(status="success", data=result)
+    except Exception as e:
+        return StandardResponse(status="error", error=str(e))
+```
+
+### CLI Layer Implementation
+```python
+# src/cli/loan_commands.py
+@click.command()
+def fetch_loans(max_pages: int = 10):
+    """CLI command that uses same service layer."""
+    try:
+        # Get service from dependency injection container
+        loan_service = get_loan_operations_service()
+        result = loan_service.fetch_and_save_loans(max_pages)
+        click.echo(f"✅ Successfully fetched {result['converted_loans_count']} loans")
+    except Exception as e:
+        click.echo(f"❌ Error: {e}")
+```
+
+## Anti-Patterns to Avoid
+
+### 1. ❌ Direct Service Creation in API/CLI
+```python
+# NEVER do this in API or CLI layers
+@app.post("/api/loans/fetch")
+async def fetch_loans():
+    # ❌ BAD - Creating services directly
+    loan_service = LoanCollectorService(KameoConfig())
+    loan_repo = LoanRepository()
+    # ... business logic here
+```
+
+### 2. ❌ Business Logic in API/CLI
+```python
+# ❌ BAD - Business logic in API layer
+@app.post("/api/loans/fetch")
+async def fetch_loans():
+    raw_loans = fetch_from_api()  # Business logic here
+    loan_objects = convert_loans(raw_loans)  # More business logic
+    save_to_database(loan_objects)  # Even more business logic
+```
+
+### 3. ❌ Cross-Service Dependencies
+```python
+# ❌ BAD - Service depending on another service
+class LoanService:
+    def __init__(self):
+        self.user_service = UserService()  # Direct dependency
+    
+    def process_loan(self, loan_data):
+        user = self.user_service.get_user(loan_data.user_id)  # Tight coupling
+```
+
+## Best Practices
+
+### 1. Error Handling
+Always handle errors at the appropriate layer:
+
+```python
+# Service Layer - Business logic errors
+def fetch_and_save_loans(self, max_pages: int = 10) -> Dict[str, Any]:
+    try:
+        # Business logic here
+        return {'status': 'success', 'data': result}
+    except BusinessLogicError as e:
+        logger.error(f"Business logic error: {e}")
+        return {'status': 'error', 'message': str(e)}
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        return {'status': 'error', 'message': 'Internal error'}
+
+# API Layer - HTTP-specific error handling
+@app.post("/api/loans/fetch")
+async def fetch_loans(max_pages: int = 10):
+    try:
+        result = loan_service.fetch_and_save_loans(max_pages)
+        if result['status'] == 'error':
+            raise HTTPException(status_code=400, detail=result['message'])
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Internal server error")
+```
+
+### 2. Logging
+Use structured logging throughout:
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+
+class LoanOperationsService:
+    def fetch_and_save_loans(self, max_pages: int = 10):
+        logger.info("Starting loan collection process", extra={
+            'max_pages': max_pages,
+            'operation': 'fetch_and_save_loans'
+        })
+        
+        try:
+            # ... business logic
+            logger.info("Loan collection completed successfully", extra={
+                'loans_fetched': len(raw_loans),
+                'loans_saved': len(loan_objects)
+            })
+        except Exception as e:
+            logger.error("Loan collection failed", extra={
+                'error': str(e),
+                'max_pages': max_pages
+            })
+            raise
+```
+
+### 3. Configuration Management
+Use environment-based configuration:
+
+```python
+# src/config/settings.py
+from pydantic import BaseSettings
+
+class Settings(BaseSettings):
+    database_url: str
+    api_key: str
+    debug: bool = False
+    
+    class Config:
+        env_file = ".env"
+
+# Usage in services
+class LoanService:
+    def __init__(self, config: Settings):
+        self.config = config
+```
+
+## Testing Guidelines
+
+### 1. Service Layer Testing
+Test services in isolation with mocked dependencies:
+
+```python
+def test_loan_operations_service():
+    # Arrange
+    mock_collector = Mock(spec=LoanCollectorService)
+    mock_repository = Mock(spec=LoanRepository)
+    service = LoanOperationsService(mock_collector, mock_repository)
+    
+    # Act
+    result = service.fetch_and_save_loans(max_pages=5)
+    
+    # Assert
+    assert result['status'] == 'success'
+    mock_collector.fetch_all_loans.assert_called_once_with(max_pages=5)
+```
+
+### 2. Integration Testing
+Test the complete flow with real dependencies:
+
+```python
+def test_complete_loan_fetch_flow():
+    # Arrange
+    config = TestConfig()
+    service = create_loan_operations_service(config)
+    
+    # Act
+    result = service.fetch_and_save_loans(max_pages=1)
+    
+    # Assert
+    assert result['status'] == 'success'
+    assert result['converted_loans_count'] > 0
+```
+
+## Migration Strategy
+
+When refactoring existing code:
+
+1. **Identify business logic** scattered across API/CLI layers
+2. **Extract to service methods** with clear responsibilities
+3. **Create service layer** that orchestrates core services
+4. **Update API/CLI** to use service layer instead of direct service calls
+5. **Add dependency injection** to eliminate hard-coded dependencies
+6. **Write tests** for each layer independently
+
+## Remember
+
+- **Service Layer** = "What should happen" (business logic flows)
+- **Core Services** = "How to do specific things" (focused operations)
+- **API/CLI** = "How to interact with the system" (user interface)
+- **Dependency Injection** = "How to wire everything together" (configuration)
+
+Always ask: "Is this the right place for this code?" If you're writing business logic in an API endpoint or CLI command, it probably belongs in a service.
+description:
+globs:
+alwaysApply: false
+---

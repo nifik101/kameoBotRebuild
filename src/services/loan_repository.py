@@ -28,6 +28,48 @@ class LoanRepository:
     in the database with proper error handling and duplicate detection.
     """
     
+    def validate_loan_for_save(self, loan_data: LoanCreate) -> bool:
+        """
+        Validate loan data before saving to database.
+        
+        Args:
+            loan_data: LoanCreate object to validate
+            
+        Returns:
+            True if loan data is valid for saving, False otherwise
+        """
+        try:
+            # Check required fields
+            if not loan_data.loan_id or not str(loan_data.loan_id).strip():
+                logger.warning("Loan ID is required")
+                return False
+            
+            if not loan_data.title or not str(loan_data.title).strip():
+                logger.warning("Loan title is required")
+                return False
+            
+            if not loan_data.amount or float(loan_data.amount) <= 0:
+                logger.warning("Loan amount must be positive")
+                return False
+            
+            # Validate interest rate if provided
+            if loan_data.interest_rate is not None:
+                if float(loan_data.interest_rate) < 0 or float(loan_data.interest_rate) > 100:
+                    logger.warning("Interest rate must be between 0 and 100")
+                    return False
+            
+            # Validate funding progress if provided
+            if loan_data.funding_progress is not None:
+                if float(loan_data.funding_progress) < 0 or float(loan_data.funding_progress) > 100:
+                    logger.warning("Funding progress must be between 0 and 100")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating loan data: {e}")
+            return False
+
     def save_loan(self, loan_data: LoanCreate) -> Optional[LoanResponse]:
         """
         Save a single loan to the database.
@@ -39,6 +81,11 @@ class LoanRepository:
             LoanResponse object if successful, None otherwise
         """
         try:
+            # Validate loan data before saving
+            if not self.validate_loan_for_save(loan_data):
+                logger.error(f"Loan data validation failed for {loan_data.loan_id}")
+                return None
+                
             with db_session_scope() as session:
                 # Check if loan already exists
                 existing_loan = session.query(Loan).filter(
@@ -66,7 +113,7 @@ class LoanRepository:
         Returns:
             Dictionary with save results and statistics
         """
-        results = {
+        results: Dict[str, Any] = {
             'total_loans': len(loans_data),
             'saved_loans': 0,
             'updated_loans': 0,

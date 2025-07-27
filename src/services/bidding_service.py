@@ -11,7 +11,6 @@ This service provides functionality to:
 Based on HAR analysis of actual bidding operations.
 """
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional

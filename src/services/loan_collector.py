@@ -261,6 +261,40 @@ class LoanCollectorService:
             logger.error(f"Failed to fetch details for loan {loan_id}: {e}")
             return None
     
+    def validate_loan_data(self, raw_loan: Dict[str, Any]) -> bool:
+        """
+        Validate raw loan data before conversion.
+        
+        Args:
+            raw_loan: Raw loan dictionary from API
+            
+        Returns:
+            True if loan data is valid, False otherwise
+        """
+        try:
+            # Check required fields
+            required_fields = ['id', 'title', 'amount']
+            for field in required_fields:
+                if field not in raw_loan or not raw_loan[field]:
+                    logger.warning(f"Missing required field '{field}' in loan data")
+                    return False
+            
+            # Validate amount is numeric
+            try:
+                amount = float(raw_loan['amount'])
+                if amount <= 0:
+                    logger.warning(f"Invalid amount {amount} for loan {raw_loan.get('id')}")
+                    return False
+            except (ValueError, TypeError):
+                logger.warning(f"Non-numeric amount {raw_loan['amount']} for loan {raw_loan.get('id')}")
+                return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error validating loan data: {e}")
+            return False
+
     def convert_to_loan_objects(self, raw_loans: List[Dict[str, Any]]) -> List[LoanCreate]:
         """
         Convert raw loan data to LoanCreate objects.
@@ -275,6 +309,11 @@ class LoanCollectorService:
         
         for raw_loan in raw_loans:
             try:
+                # Validate loan data before conversion
+                if not self.validate_loan_data(raw_loan):
+                    logger.warning(f"Skipping invalid loan data: {raw_loan.get('id', 'unknown')}")
+                    continue
+                    
                 loan_obj = self._convert_single_loan(raw_loan)
                 if loan_obj:
                     loan_objects.append(loan_obj)
@@ -425,7 +464,6 @@ class LoanCollectorService:
             identifier: Optional identifier for the data
         """
         try:
-            import os
             cwd = str(Path.cwd())
             # Spara testdata i logs/debug om vi kör test, annars i data/raw
             if 'pytest' in cwd or 'test' in cwd:
