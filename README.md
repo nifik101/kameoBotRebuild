@@ -77,7 +77,84 @@ LOAN_DB_BACKUP_INTERVAL_HOURS=24
 LOAN_DB_BACKUP_RETENTION_DAYS=7
 ```
 
-## Usage
+## Architecture
+
+### 🏗️ Service Layer Architecture
+
+The application follows a clean service layer architecture with clear separation of concerns:
+
+```
+┌─────────────────┐    ┌──────────────────────┐    ┌─────────────────┐
+│   User Layer    │    │   Service Layer      │    │  Core Services  │
+│   (CLI/API)     │───▶│ LoanOperationsService│───▶│ LoanCollector   │
+│                 │    │                      │    │ BiddingService  │
+└─────────────────┘    └──────────────────────┘    │ LoanRepository  │
+                                                   └─────────────────┘
+```
+
+#### Key Components:
+
+- **`LoanOperationsService`**: Unified service that orchestrates all loan and bidding operations
+- **`LoanCollectorService`**: Handles fetching loan data from Kameo API
+- **`BiddingService`**: Manages bidding operations and analysis
+- **`LoanRepository`**: Handles database operations for loan data
+- **`JobService`**: Manages background jobs and async operations
+
+#### Benefits:
+
+- ✅ **Single Source of Truth**: All business logic centralized in services
+- ✅ **Easy Testing**: Services can be tested independently
+- ✅ **Reusable**: Same services used by both CLI and API
+- ✅ **Maintainable**: Clear separation of concerns
+- ✅ **Scalable**: Easy to add new features or modify existing ones
+
+## Quick Start
+
+### 🚀 Easy Startup (Recommended)
+
+The easiest way to start the application is using the provided startup scripts:
+
+#### On macOS/Linux:
+```bash
+# Interactive menu (recommended for beginners)
+./start.sh
+
+# Or direct commands:
+./start.sh api          # Start API server
+./start.sh cli          # Start CLI interface
+./start.sh demo         # Run demo
+./start.sh validate     # Validate configuration
+```
+
+#### On Windows:
+```cmd
+# Interactive menu (recommended for beginners)
+start.bat
+
+# Or direct commands:
+start.bat api          # Start API server
+start.bat cli          # Start CLI interface
+start.bat demo         # Run demo
+start.bat validate     # Validate configuration
+```
+
+#### Using Python directly:
+```bash
+# Start API server (default)
+python run.py
+
+# Start CLI interface
+python run.py --cli
+
+# Run demo
+python run.py --demo
+
+# Validate configuration
+python run.py --validate-only
+
+# Start API on custom port with debug
+python run.py --api --port 8080 --debug
+```
 
 ### Command Line Interface
 
