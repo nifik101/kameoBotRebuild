@@ -11,3 +11,4 @@ sqlalchemy>=2.0.0  # For database ORM
 alembic>=1.13.0  # For database migrations
 click>=8.0.0  # For CLI interface
 httpx>=0.27.0  # For async HTTP requests
+flask>=2.1.0
