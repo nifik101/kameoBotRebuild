@@ -21,7 +21,60 @@ A comprehensive Python application for interacting with Kameo's lending platform
 ### Prerequisites
 
 - Python 3.8+
+- uv (recommended package manager)
+- Node.js 18+ (for frontend)
+- pnpm (recommended package manager for frontend)
 - Virtual environment (recommended)
+
+#### Install uv (if not already installed):
+```bash
+# macOS/Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Or using pip
+pip install uv
+
+# Or using Homebrew (macOS)
+brew install uv
+```
+
+#### Install Node.js (if not already installed):
+```bash
+# macOS (using Homebrew)
+brew install node
+
+# Or download from https://nodejs.org
+# Or using nvm (Node Version Manager)
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
+nvm install 18
+nvm use 18
+```
+
+#### Install pnpm (if not already installed):
+```bash
+# Using npm (requires Node.js)
+npm install -g pnpm
+
+# Or using curl
+curl -fsSL https://get.pnpm.io/install.sh | sh -
+
+# Or using Homebrew (macOS)
+brew install pnpm
+```
+
+#### Why uv?
+- ⚡ **Fast**: Much faster than pip for dependency resolution and installation
+- 🔒 **Reliable**: Deterministic builds with lock files
+- 🛡️ **Secure**: Built-in security features and vulnerability scanning
+- 🎯 **Modern**: Native support for modern Python packaging standards
+- 🔧 **Developer-friendly**: Better error messages and debugging tools
+
+#### Why pnpm?
+- ⚡ **Fast**: Much faster than npm for package installation
+- 💾 **Efficient**: Shared dependencies across projects, saving disk space
+- 🔒 **Reliable**: Strict dependency resolution and lock files
+- 🛡️ **Secure**: Built-in security features and non-flat node_modules
+- 🎯 **Modern**: Native support for modern JavaScript packaging standards
 
 ### Setup
 
@@ -32,13 +85,13 @@ A comprehensive Python application for interacting with Kameo's lending platform
 
 2. **Create and activate virtual environment**:
    ```bash
-   python -m venv .venv
+   uv venv
    source .venv/bin/activate  # On Windows: .venv\Scripts\activate
    ```
 
 3. **Install dependencies**:
    ```bash
-   pip install -r requirements.txt
+   uv sync
    ```
 
 4. **Copy environment template**:
@@ -108,6 +161,33 @@ The application follows a clean service layer architecture with clear separation
 - ✅ **Maintainable**: Clear separation of concerns
 - ✅ **Scalable**: Easy to add new features or modify existing ones
 
+### 🌐 Frontend Architecture
+
+The frontend is a modern React application built with:
+
+- **React 19** - Latest React with modern features
+- **Vite** - Fast build tool and development server
+- **Material-UI (MUI)** - Professional UI components
+- **React Router** - Client-side routing
+- **Axios** - HTTP client for API communication
+- **Zustand** - Lightweight state management
+- **Chart.js** - Data visualization
+
+#### Frontend Features:
+
+- 📊 **Dashboard** - Overview of loans and bidding activity
+- 📋 **Loans Management** - Browse and analyze available loans
+- 🎯 **Bidding Interface** - Place and manage bids
+- ⚙️ **Configuration** - Manage bot settings
+- 📱 **Responsive Design** - Works on desktop and mobile
+
+#### Development Server:
+
+- **Port**: 5173 (http://localhost:5173)
+- **API Proxy**: Automatically proxies `/api/*` to backend (port 8000)
+- **WebSocket Proxy**: Proxies `/ws/*` to backend WebSocket
+- **Hot Reload**: Automatic page refresh on code changes
+
 ## Quick Start
 
 ### 🚀 Easy Startup (Recommended)
@@ -120,7 +200,9 @@ The easiest way to start the application is using the provided startup scripts:
 ./start.sh
 
 # Or direct commands:
-./start.sh api          # Start API server
+./start.sh api          # Start API server (Backend)
+./start.sh frontend     # Start frontend (React app)
+./start.sh both         # Start both API and frontend
 ./start.sh cli          # Start CLI interface
 ./start.sh demo         # Run demo
 ./start.sh validate     # Validate configuration
@@ -142,6 +224,9 @@ start.bat validate     # Validate configuration
 ```bash
 # Start API server (default)
 python run.py
+
+# Start frontend (React app)
+python run.py --frontend
 
 # Start CLI interface
 python run.py --cli

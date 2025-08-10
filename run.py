@@ -35,7 +35,7 @@ try:
     from src.services.job_service import get_job_service
 except ImportError as e:
     print(f"❌ Failed to import required modules: {e}")
-    print("Please ensure all dependencies are installed: pip install -r requirements.txt")
+    print("Please ensure all dependencies are installed: uv sync")
     sys.exit(1)
 
 
@@ -107,10 +107,66 @@ def start_api_server(host: str = "0.0.0.0", port: int = 8000, debug: bool = Fals
         )
         
     except ImportError:
-        logger.error("❌ FastAPI/uvicorn not installed. Install with: pip install fastapi uvicorn")
+        logger.error("❌ FastAPI/uvicorn not installed. Install with: uv sync")
         sys.exit(1)
     except Exception as e:
         logger.error(f"❌ Failed to start API server: {e}")
+        sys.exit(1)
+
+
+def start_frontend() -> None:
+    """Start the frontend development server."""
+    logger = logging.getLogger(__name__)
+    
+    try:
+        import subprocess
+        import os
+        
+        # Check if frontend directory exists
+        frontend_dir = Path("frontend")
+        if not frontend_dir.exists():
+            logger.error("❌ Frontend directory not found")
+            sys.exit(1)
+        
+        # Check if Node.js is available
+        try:
+            subprocess.run(["node", "--version"], check=True, capture_output=True)
+            logger.info("✅ Node.js found")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            logger.error("❌ Node.js not found. Please install Node.js from https://nodejs.org")
+            sys.exit(1)
+        
+        # Check if pnpm is available
+        try:
+            subprocess.run(["pnpm", "--version"], check=True, capture_output=True)
+            logger.info("✅ pnpm found")
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            logger.error("❌ pnpm not found. Please install pnpm:")
+            logger.error("   npm install -g pnpm")
+            logger.error("   # Or: curl -fsSL https://get.pnpm.io/install.sh | sh -")
+            sys.exit(1)
+        
+        # Change to frontend directory
+        os.chdir(frontend_dir)
+        
+        # Check if node_modules exists
+        if not Path("node_modules").exists():
+            logger.info("📦 Installing frontend dependencies...")
+            subprocess.run(["pnpm", "install"], check=True)
+            logger.info("✅ Frontend dependencies installed")
+        
+        logger.info("🚀 Starting frontend development server...")
+        logger.info("🌐 Frontend will be available at: http://localhost:5173")
+        logger.info("🔧 API proxy configured to: http://localhost:8000")
+        
+        # Start the frontend
+        subprocess.run(["pnpm", "run", "dev"], check=True)
+        
+    except subprocess.CalledProcessError as e:
+        logger.error(f"❌ Failed to start frontend: {e}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"❌ Failed to start frontend: {e}")
         sys.exit(1)
 
 
@@ -189,6 +245,11 @@ Examples:
         help='Start CLI interface'
     )
     mode_group.add_argument(
+        '--frontend',
+        action='store_true',
+        help='Start frontend (React app)'
+    )
+    mode_group.add_argument(
         '--demo',
         action='store_true',
         help='Run demo'
@@ -247,6 +308,8 @@ Examples:
         run_demo()
     elif args.cli:
         start_cli_interface()
+    elif args.frontend:
+        start_frontend()
     else:
         # Default to API mode
         start_api_server(host=args.host, port=args.port, debug=args.debug)

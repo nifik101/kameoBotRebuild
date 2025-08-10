@@ -1,3 +1,7 @@
+---
+description: Python Service Layer Architecture Guidelines, for deciding python project structure
+alwaysApply: false
+---
 # Python Service Layer Architecture Guidelines
 
 ## Core Principles
@@ -334,3 +338,4 @@ description:
 globs:
 alwaysApply: false
 ---
+
