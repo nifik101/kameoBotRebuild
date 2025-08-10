@@ -38,7 +38,6 @@ class BiddingRequest(BaseModel):
 class ConfigUpdateRequest(BaseModel):
     config: Dict[str, Any]
 
-
 # Secure CORS configuration
 allowed_origins = [
     "http://localhost:8000",
@@ -136,11 +135,9 @@ async def cancel_job(job_id: str):
 async def fetch_loans_direct(max_pages: int = 10):
     """Fetch loans directly (synchronous operation)."""
     try:
-        from src.config import KameoConfig
-        from src.services.loan_operations_service import LoanOperationsService
+        from src.services.service_factory import get_loan_operations_service
         
-        config = KameoConfig()
-        service = LoanOperationsService(config)
+        service = get_loan_operations_service()
         result = service.fetch_and_save_loans(max_pages)
         return StandardResponse(status="success", data=result)
     except Exception as e:
@@ -152,11 +149,9 @@ async def fetch_loans_direct(max_pages: int = 10):
 async def analyze_loans():
     """Analyze all available loan fields."""
     try:
-        from src.config import KameoConfig
-        from src.services.loan_operations_service import LoanOperationsService
+        from src.services.service_factory import get_loan_operations_service
         
-        config = KameoConfig()
-        service = LoanOperationsService(config)
+        service = get_loan_operations_service()
         result = service.analyze_loan_fields()
         return StandardResponse(status="success", data=result)
     except Exception as e:
@@ -168,11 +163,9 @@ async def analyze_loans():
 async def get_loan_statistics():
     """Get database loan statistics."""
     try:
-        from src.config import KameoConfig
-        from src.services.loan_operations_service import LoanOperationsService
+        from src.services.service_factory import get_loan_operations_service
         
-        config = KameoConfig()
-        service = LoanOperationsService(config)
+        service = get_loan_operations_service()
         stats = service.get_loan_statistics()
         return StandardResponse(status="success", data=stats)
     except Exception as e:
@@ -184,11 +177,9 @@ async def get_loan_statistics():
 async def get_loans(page: int = 1, limit: int = 50):
     """Get loans from database with pagination."""
     try:
-        from src.config import KameoConfig
-        from src.services.loan_operations_service import LoanOperationsService
+        from src.services.service_factory import get_loan_operations_service
         
-        config = KameoConfig()
-        service = LoanOperationsService(config)
+        service = get_loan_operations_service()
         result = service.get_loans_from_database(page=page, limit=limit)
         return StandardResponse(status="success", data=result)
     except Exception as e:
@@ -201,11 +192,9 @@ async def get_loans(page: int = 1, limit: int = 50):
 async def list_available_loans(max_pages: int = 3):
     """List available loans for bidding."""
     try:
-        from src.config import KameoConfig
-        from src.services.loan_operations_service import LoanOperationsService
+        from src.services.service_factory import get_loan_operations_service
         
-        config = KameoConfig()
-        service = LoanOperationsService(config)
+        service = get_loan_operations_service()
         loans = service.list_available_loans(max_pages)
         return StandardResponse(status="success", data={"loans": loans})
     except Exception as e:
@@ -217,11 +206,9 @@ async def list_available_loans(max_pages: int = 3):
 async def analyze_loan_for_bidding(loan_id: int):
     """Analyze a specific loan for bidding potential."""
     try:
-        from src.config import KameoConfig
-        from src.services.loan_operations_service import LoanOperationsService
+        from src.services.service_factory import get_loan_operations_service
         
-        config = KameoConfig()
-        service = LoanOperationsService(config)
+        service = get_loan_operations_service()
         analysis = service.analyze_loan_for_bidding(loan_id)
         
         if not analysis:
@@ -239,11 +226,9 @@ async def analyze_loan_for_bidding(loan_id: int):
 async def place_bid(request: BiddingRequest):
     """Place a bid on a loan."""
     try:
-        from src.config import KameoConfig
-        from src.services.loan_operations_service import LoanOperationsService
+        from src.services.service_factory import get_loan_operations_service
         
-        config = KameoConfig()
-        service = LoanOperationsService(config)
+        service = get_loan_operations_service()
         result = service.place_bid(request.loan_id, request.amount, request.payment_option)
         return StandardResponse(status="success", data=result)
     except Exception as e:
@@ -356,9 +341,10 @@ async def get_system_status():
 
         # Loan statistics
         try:
-            from src.cli import KameoBotCLI
-            cli_instance = KameoBotCLI()
-            loan_stats = cli_instance.get_loan_statistics()
+            from src.services.service_factory import get_loan_operations_service
+            
+            service = get_loan_operations_service()
+            loan_stats = service.get_loan_statistics()
             total_loans_count = loan_stats.get('total_loans', 0) if isinstance(loan_stats, dict) else 0
         except Exception:
             total_loans_count = 0
@@ -382,11 +368,9 @@ async def get_system_status():
 async def run_demo():
     """Run demo functionality."""
     try:
-        from src.config import KameoConfig
-        from src.services.loan_operations_service import LoanOperationsService
+        from src.services.service_factory import get_loan_operations_service
         
-        config = KameoConfig()
-        service = LoanOperationsService(config)
+        service = get_loan_operations_service()
         result = service.run_demo()
         return StandardResponse(status="success", data=result)
     except Exception as e:

@@ -65,9 +65,9 @@ class KameoBotCLI:
         # Initialize database
         self.db_manager = init_database(self.db_config)
         
-        # Initialize unified service
-        from src.services.loan_operations_service import LoanOperationsService
-        self.loan_operations = LoanOperationsService(self.kameo_config, save_raw_data)
+        # Initialize unified service using service factory
+        from src.services.service_factory import create_loan_operations_service
+        self.loan_operations = create_loan_operations_service(self.kameo_config, save_raw_data)
         
         self.logger.info("KameoBotCLI initialized successfully")
     
