@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from ..database.connection import db_session_scope
 from ..models.loan import Loan, LoanCreate, LoanResponse, LoanStatus
+from ..utils.loan_validator import LoanValidator
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class LoanRepository:
     
     def validate_loan_for_save(self, loan_data: LoanCreate) -> bool:
         """
-        Validate loan data before saving to database.
+        Validate loan data before saving to database using centralized validator.
         
         Args:
             loan_data: LoanCreate object to validate
@@ -38,37 +39,7 @@ class LoanRepository:
         Returns:
             True if loan data is valid for saving, False otherwise
         """
-        try:
-            # Check required fields
-            if not loan_data.loan_id or not str(loan_data.loan_id).strip():
-                logger.warning("Loan ID is required")
-                return False
-            
-            if not loan_data.title or not str(loan_data.title).strip():
-                logger.warning("Loan title is required")
-                return False
-            
-            if not loan_data.amount or float(loan_data.amount) <= 0:
-                logger.warning("Loan amount must be positive")
-                return False
-            
-            # Validate interest rate if provided
-            if loan_data.interest_rate is not None:
-                if float(loan_data.interest_rate) < 0 or float(loan_data.interest_rate) > 100:
-                    logger.warning("Interest rate must be between 0 and 100")
-                    return False
-            
-            # Validate funding progress if provided
-            if loan_data.funding_progress is not None:
-                if float(loan_data.funding_progress) < 0 or float(loan_data.funding_progress) > 100:
-                    logger.warning("Funding progress must be between 0 and 100")
-                    return False
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error validating loan data: {e}")
-            return False
+        return LoanValidator.validate_loan_create(loan_data)
 
     def save_loan(self, loan_data: LoanCreate) -> Optional[LoanResponse]:
         """

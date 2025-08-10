@@ -18,6 +18,16 @@ from typing import Any, Dict, List, Optional
 import requests
 
 from ..config import KameoConfig
+from ..utils.loan_validator import LoanValidator
+from ..utils.constants import (
+    LOAN_LISTINGS_ENDPOINT, BIDDING_LOAD_ENDPOINT,
+    DEFAULT_LOAN_LIMIT, DEFAULT_BIDDING_MAX_PAGES,
+    SWEDEN_CODE, NORWAY_CODE, DENMARK_CODE,
+    DEFAULT_API_HEADERS, BIDDING_HEADERS,
+    PAYMENT_OPTION_INTEREST, PAYMENT_OPTION_DOWN,
+    HIGH_RISK_THRESHOLD, MEDIUM_RISK_THRESHOLD,
+    RISK_LEVEL_HIGH, RISK_LEVEL_MEDIUM, RISK_LEVEL_LOW, RISK_LEVEL_UNKNOWN
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +37,7 @@ class BiddingRequest:
     """Data class for bidding request parameters."""
     loan_id: int
     amount: int
-    payment_option: str = "ip"  # "ip" for interest payment, "dp" for down payment
+    payment_option: str = PAYMENT_OPTION_INTEREST  # "ip" for interest payment, "dp" for down payment
     sequence_hash: str = ""
 
 
@@ -49,16 +59,24 @@ class BiddingService:
     and handles the complete bidding workflow including sequence hashes.
     """
     
-    def __init__(self, config: KameoConfig) -> None:
+    def __init__(self, config: KameoConfig, loan_data_service=None) -> None:
         """
         Initialize the bidding service.
         
         Args:
             config: Kameo configuration object
+            loan_data_service: Optional LoanDataService for loan data operations
         """
         self.config = config
         self.session = requests.Session()
         self._setup_session()
+        
+        # Use provided loan data service or create one
+        if loan_data_service:
+            self.loan_data_service = loan_data_service
+        else:
+            from .loan_data_service import LoanDataService
+            self.loan_data_service = LoanDataService(config)
         
         logger.info("BiddingService initialized successfully")
     
@@ -80,9 +98,9 @@ class BiddingService:
         if hasattr(self.config, 'auth_token') and self.config.auth_token:
             self.session.headers['Authorization'] = f'Bearer {self.config.auth_token}'
     
-    def get_loan_listings(self, limit: int = 12, page: int = 1) -> Optional[Dict[str, Any]]:
+    def get_loan_listings(self, limit: int = DEFAULT_LOAN_LIMIT, page: int = 1) -> Optional[Dict[str, Any]]:
         """
-        Fetch available loans from Kameo's API.
+        Fetch available loans from Kameo's API using LoanDataService.
         
         Args:
             limit: Number of loans to fetch (default: 12)
@@ -91,38 +109,11 @@ class BiddingService:
         Returns:
             JSON response with loan data or None on error
         """
-        api_url = "https://api.kameo.se/v1/loans/listing/investment-options"
-        
-        params = {
-            "subscription_origin_sweden": "1",
-            "subscription_origin_norway": "0",
-            "subscription_origin_denmark": "1",
-            "limit": str(limit),
-            "page": str(page)
-        }
-        
-        headers = {
-            "accept": "application/json, text/javascript, */*; q=0.01",
-            "accept-language": "sv",
-            "origin": "https://www.kameo.se",
-            "referer": "https://www.kameo.se/aktuella-lan"
-        }
-        
-        try:
-            response = self.session.get(api_url, params=params, headers=headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            logger.info(f"Fetched {len(data.get('data', {}).get('loans', []))} loans from page {page}")
-            return data
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching loan listings: {e}")
-            return None
+        return self.loan_data_service.fetch_loan_listings(limit=limit, page=page)
     
     def load_bidding_data(self, loan_id: int) -> Optional[Dict[str, Any]]:
         """
-        Load bidding data for a specific loan.
+        Load bidding data for a specific loan using LoanDataService.
         
         Args:
             loan_id: ID of the loan
@@ -130,26 +121,7 @@ class BiddingService:
         Returns:
             Bidding data or None on error
         """
-        api_url = f"https://api.kameo.se/v1/bidding/{loan_id}/load"
-        
-        headers = {
-            "accept": "*/*",
-            "content-type": "application/json",
-            "origin": "https://www.kameo.se",
-            "referer": "https://www.kameo.se/"
-        }
-        
-        try:
-            response = self.session.get(api_url, headers=headers)
-            response.raise_for_status()
-            
-            data = response.json()
-            logger.info(f"Loaded bidding data for loan {loan_id}")
-            return data
-            
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error loading bidding data for loan {loan_id}: {e}")
-            return None
+        return self.loan_data_service.fetch_bidding_data(loan_id)
     
     def place_bid(self, request: BiddingRequest) -> BiddingResponse:
         """
@@ -208,9 +180,9 @@ class BiddingService:
                 error_message=str(e)
             )
     
-    def get_available_loans(self, max_pages: int = 5) -> List[Dict[str, Any]]:
+    def get_available_loans(self, max_pages: int = DEFAULT_BIDDING_MAX_PAGES) -> List[Dict[str, Any]]:
         """
-        Get all available loans for bidding.
+        Get all available loans for bidding using LoanDataService.
         
         Args:
             max_pages: Maximum number of pages to fetch
@@ -218,22 +190,7 @@ class BiddingService:
         Returns:
             List of loan dictionaries
         """
-        all_loans = []
-        
-        for page in range(1, max_pages + 1):
-            data = self.get_loan_listings(page=page)
-            if not data:
-                break
-                
-            loans = data.get('data', {}).get('loans', [])
-            if not loans:
-                break
-                
-            all_loans.extend(loans)
-            logger.info(f"Fetched {len(loans)} loans from page {page}")
-        
-        logger.info(f"Total loans fetched: {len(all_loans)}")
-        return all_loans
+        return self.loan_data_service.get_all_loans(max_pages=max_pages)
     
     def analyze_loan_for_bidding(self, loan_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -296,7 +253,7 @@ class BiddingService:
         """
         analysis: Dict[str, Any] = {
             'bidding_viable': False,
-            'risk_level': 'unknown',
+            'risk_level': RISK_LEVEL_UNKNOWN,
             'recommended_bid_amount': None,
             'notes': []
         }
@@ -311,13 +268,13 @@ class BiddingService:
             if status.lower() in ['open', 'active'] and amount > 0:
                 analysis['bidding_viable'] = True
             
-            # Risk assessment
-            if interest_rate >= 8.0:
-                analysis['risk_level'] = 'high'
-            elif interest_rate >= 6.0:
-                analysis['risk_level'] = 'medium'
+            # Risk assessment using constants
+            if interest_rate >= HIGH_RISK_THRESHOLD:
+                analysis['risk_level'] = RISK_LEVEL_HIGH
+            elif interest_rate >= MEDIUM_RISK_THRESHOLD:
+                analysis['risk_level'] = RISK_LEVEL_MEDIUM
             elif interest_rate > 0:
-                analysis['risk_level'] = 'low'
+                analysis['risk_level'] = RISK_LEVEL_LOW
             
             # Recommended bid amount (simple logic)
             if analysis['bidding_viable']:
@@ -350,12 +307,14 @@ class BiddingService:
         """
         try:
             amount = strategy.get('amount', 0)
-            payment_option = strategy.get('payment_option', 'ip')
+            payment_option = strategy.get('payment_option', PAYMENT_OPTION_INTEREST)
             
-            if amount <= 0:
+            # Validate bidding request using centralized validator
+            is_valid, error_message = LoanValidator.validate_bidding_request(loan_id, amount, payment_option)
+            if not is_valid:
                 return BiddingResponse(
                     success=False,
-                    error_message="Invalid bid amount"
+                    error_message=error_message
                 )
             
             request = BiddingRequest(

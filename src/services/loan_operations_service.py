@@ -26,21 +26,23 @@ class LoanOperationsService:
     of access for loan collection, analysis, and bidding operations.
     """
     
-    def __init__(self, config: KameoConfig, save_raw_data: bool = False):
+    def __init__(
+        self, 
+        bidding_service: BiddingService,
+        loan_service: LoanCollectorService,
+        loan_repository: LoanRepository
+    ):
         """
-        Initialize the loan operations service.
+        Initialize the loan operations service with injected dependencies.
         
         Args:
-            config: Kameo configuration object
-            save_raw_data: Whether to save raw API responses for debugging
+            bidding_service: Service for handling bidding operations
+            loan_service: Service for collecting loan data
+            loan_repository: Repository for loan data persistence
         """
-        self.config = config
-        self.save_raw_data = save_raw_data
-        
-        # Initialize underlying services
-        self.bidding_service = BiddingService(config)
-        self.loan_service = LoanCollectorService(config, save_raw_data)
-        self.loan_repository = LoanRepository()
+        self.bidding_service = bidding_service
+        self.loan_service = loan_service
+        self.loan_repository = loan_repository
         
         logger.info("LoanOperationsService initialized successfully")
     

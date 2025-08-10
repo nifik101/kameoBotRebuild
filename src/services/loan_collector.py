@@ -12,12 +12,10 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
-
 from src.auth import KameoAuthenticator
 from src.config import KameoConfig
+from src.utils.loan_validator import LoanValidator
+from src.utils.constants import DEFAULT_MAX_PAGES
 from ..models.loan import LoanCreate, LoanStatus
 
 logger = logging.getLogger(__name__)
@@ -31,43 +29,32 @@ class LoanCollectorService:
     and data processing to collect loan information from Kameo.
     """
     
-    def __init__(self, config: KameoConfig, save_raw_data: bool = False) -> None:
+    def __init__(self, config: KameoConfig, save_raw_data: bool = False, loan_data_service=None) -> None:
         """
         Initialize the loan collector service.
         
         Args:
             config: Kameo configuration object
             save_raw_data: Whether to save raw API responses for debugging
+            loan_data_service: Optional LoanDataService for API operations
         """
         self.config = config
         self.save_raw_data = save_raw_data
-        self.session = requests.Session()
         self.authenticator = KameoAuthenticator(config.totp_secret) if config.totp_secret else None
         self.is_authenticated = False
         
-        # Setup session with retry strategy
-        retry_strategy = Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504],
-        )
-        adapter = HTTPAdapter(max_retries=retry_strategy)
-        self.session.mount("http://", adapter)
-        self.session.mount("https://", adapter)
-        
-        # Set default headers
-        self.session.headers.update({
-            'User-Agent': config.user_agent,
-            'Accept': 'application/json, text/javascript, */*; q=0.01',
-            'Accept-Language': 'sv',
-            'Accept-Encoding': 'gzip, deflate, br, zstd',
-        })
+        # Use provided loan data service or create one
+        if loan_data_service:
+            self.loan_data_service = loan_data_service
+        else:
+            from .loan_data_service import LoanDataService
+            self.loan_data_service = LoanDataService(config)
         
         logger.info(f"LoanCollectorService initialized for {config.email}")
     
-    def _make_request(self, method: str, url: str, **kwargs) -> requests.Response:
+    def _make_request(self, method: str, url: str, **kwargs):
         """
-        Make HTTP request with proper error handling and logging.
+        Make HTTP request using loan_data_service.
         
         Args:
             method: HTTP method (GET, POST, etc.)
@@ -78,56 +65,26 @@ class LoanCollectorService:
             Response object
             
         Raises:
-            requests.exceptions.RequestException: If request fails
+            Exception: If request fails
         """
-        timeout = (self.config.connect_timeout, self.config.read_timeout)
-        
-        try:
-            response = self.session.request(
-                method=method,
-                url=url,
-                timeout=timeout,
-                **kwargs
-            )
-            response.raise_for_status()
-            logger.debug(f"Request successful: {method} {url} -> {response.status_code}")
-            return response
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request failed: {method} {url} -> {e}")
-            raise
+        # This method is kept for compatibility but delegates to loan_data_service
+        # In practice, we should use loan_data_service methods directly
+        logger.warning("_make_request is deprecated, use loan_data_service methods directly")
+        raise NotImplementedError("Use loan_data_service methods directly")
     
     def authenticate(self) -> bool:
         """
-        Authenticate with Kameo using the existing KameoClient logic.
+        Authenticate with Kameo using the loan_data_service.
         
         Returns:
             True if authentication successful, False otherwise
         """
         try:
-            # Import here to avoid circular imports
-            from src.kameo_client import KameoClient
-            
-            # Create a temporary client for authentication
-            client = KameoClient(self.config)
-            
-            # Perform login
-            if not client.login():
-                logger.error("Initial login failed")
-                return False
-            
-            # Handle 2FA if needed
-            if self.config.totp_secret:
-                if not client.handle_2fa():
-                    logger.error("2FA authentication failed")
-                    return False
-            
-            # Copy session cookies and headers
-            self.session.cookies.update(client.session.cookies)
-            self.session.headers.update(client.session.headers)
-            
-            self.is_authenticated = True
-            logger.info("Authentication successful")
-            return True
+            # Use loan_data_service for authentication
+            self.is_authenticated = self.loan_data_service.http_client.authenticate()
+            if self.is_authenticated:
+                logger.info("Authentication successful")
+            return self.is_authenticated
             
         except Exception as e:
             logger.error(f"Authentication failed: {e}")
@@ -142,7 +99,7 @@ class LoanCollectorService:
         denmark: bool = True
     ) -> List[Dict[str, Any]]:
         """
-        Fetch loans from Kameo's investment options API.
+        Fetch loans from Kameo's investment options API using loan_data_service.
         
         Args:
             limit: Maximum number of loans to fetch per page
@@ -159,21 +116,19 @@ class LoanCollectorService:
             if not self.authenticate():
                 raise RuntimeError("Authentication failed")
         
-        # Build API URL and parameters based on HAR analysis
-        api_url = "https://api.kameo.se/v1/loans/listing/investment-options"
-        params = {
-            'subscription_origin_sweden': '1' if sweden else '0',
-            'subscription_origin_norway': '1' if norway else '0',
-            'subscription_origin_denmark': '1' if denmark else '0',
-            'limit': str(limit),
-            'page': str(page)
-        }
-        
         logger.info(f"Fetching loans: limit={limit}, page={page}, sweden={sweden}, norway={norway}, denmark={denmark}")
         
         try:
-            response = self._make_request('GET', api_url, params=params)
-            data = response.json()
+            data = self.loan_data_service.fetch_loan_listings(
+                limit=limit, 
+                page=page, 
+                sweden=sweden, 
+                norway=norway, 
+                denmark=denmark
+            )
+            
+            if not data:
+                return []
             
             # Save raw data if requested
             if self.save_raw_data:
@@ -200,9 +155,9 @@ class LoanCollectorService:
             logger.error(f"Failed to fetch loans: {e}")
             return []
     
-    def fetch_all_loans(self, max_pages: int = 10) -> List[Dict[str, Any]]:
+    def fetch_all_loans(self, max_pages: int = DEFAULT_MAX_PAGES) -> List[Dict[str, Any]]:
         """
-        Fetch all available loans across multiple pages.
+        Fetch all available loans across multiple pages using loan_data_service.
         
         Args:
             max_pages: Maximum number of pages to fetch
@@ -210,28 +165,11 @@ class LoanCollectorService:
         Returns:
             List of all loan data dictionaries
         """
-        all_loans = []
-        
-        for page in range(1, max_pages + 1):
-            try:
-                loans = self.fetch_loans(page=page)
-                if not loans:
-                    logger.info(f"No more loans found on page {page}")
-                    break
-                
-                all_loans.extend(loans)
-                logger.info(f"Fetched {len(loans)} loans from page {page}")
-                
-            except Exception as e:
-                logger.error(f"Error fetching page {page}: {e}")
-                break
-        
-        logger.info(f"Total loans fetched: {len(all_loans)}")
-        return all_loans
+        return self.loan_data_service.get_all_loans(max_pages=max_pages)
     
     def fetch_loan_details(self, loan_id: str) -> Optional[Dict[str, Any]]:
         """
-        Fetch detailed information for a specific loan.
+        Fetch detailed information for a specific loan using loan_data_service.
         
         Args:
             loan_id: ID of the loan to fetch details for
@@ -244,17 +182,13 @@ class LoanCollectorService:
             if not self.authenticate():
                 return None
         
-        api_url = f"https://api.kameo.se/v1/loans/{loan_id}"
-        
         try:
-            response = self._make_request('GET', api_url)
-            data = response.json()
+            data = self.loan_data_service.fetch_loan_details(loan_id)
             
             # Save raw data if requested
-            if self.save_raw_data:
+            if self.save_raw_data and data:
                 self._save_raw_data('loan_details', data, loan_id)
             
-            logger.info(f"Successfully fetched details for loan {loan_id}")
             return data
             
         except Exception as e:
@@ -263,7 +197,7 @@ class LoanCollectorService:
     
     def validate_loan_data(self, raw_loan: Dict[str, Any]) -> bool:
         """
-        Validate raw loan data before conversion.
+        Validate raw loan data before conversion using centralized validator.
         
         Args:
             raw_loan: Raw loan dictionary from API
@@ -271,29 +205,7 @@ class LoanCollectorService:
         Returns:
             True if loan data is valid, False otherwise
         """
-        try:
-            # Check required fields
-            required_fields = ['id', 'title', 'amount']
-            for field in required_fields:
-                if field not in raw_loan or not raw_loan[field]:
-                    logger.warning(f"Missing required field '{field}' in loan data")
-                    return False
-            
-            # Validate amount is numeric
-            try:
-                amount = float(raw_loan['amount'])
-                if amount <= 0:
-                    logger.warning(f"Invalid amount {amount} for loan {raw_loan.get('id')}")
-                    return False
-            except (ValueError, TypeError):
-                logger.warning(f"Non-numeric amount {raw_loan['amount']} for loan {raw_loan.get('id')}")
-                return False
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error validating loan data: {e}")
-            return False
+        return LoanValidator.validate_raw_loan(raw_loan)
 
     def convert_to_loan_objects(self, raw_loans: List[Dict[str, Any]]) -> List[LoanCreate]:
         """
@@ -553,6 +465,7 @@ class LoanCollectorService:
     
     def close(self) -> None:
         """Close the service and clean up resources."""
-        if self.session:
-            self.session.close()
+        # Close loan_data_service if it has a close method
+        if hasattr(self.loan_data_service, 'close'):
+            self.loan_data_service.close()
         logger.info("LoanCollectorService closed") 
